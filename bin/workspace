@@ -1,0 +1,72 @@
+#!/bin/sh
+# workspace — CLI tool for managing development workspaces.
+#
+# Subcommands:
+#   bootstrap  Initialize a workspace (symlinks, deps, DB)
+#   run        Start the dev server
+#   archive    Tear down a workspace (kill processes, drop DBs)
+#   update     Pull latest from GitHub and reinstall
+#   version    Print the current version
+#
+# Install:
+#   curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash
+
+set -e
+
+WORKSPACE_HOME="${WORKSPACE_HOME:-$HOME/.workspace}"
+VERSION=$(cat "$WORKSPACE_HOME/VERSION" 2>/dev/null || echo "unknown")
+
+usage() {
+  echo "workspace $VERSION"
+  echo ""
+  echo "Usage: workspace <command>"
+  echo ""
+  echo "Commands:"
+  echo "  bootstrap  Initialize a workspace (symlinks, deps, DB)"
+  echo "  run        Start the dev server"
+  echo "  archive    Tear down a workspace (kill processes, drop DBs)"
+  echo "  update     Pull latest from GitHub and reinstall"
+  echo "  version    Print the current version"
+  echo ""
+  echo "Run 'workspace <command> --help' for more information."
+}
+
+case "${1:-}" in
+  bootstrap)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/bootstrap.sh" "$@"
+    ;;
+  run)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/run.sh" "$@"
+    ;;
+  archive)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/archive.sh" "$@"
+    ;;
+  update)
+    shift
+    echo "Updating workspace CLI..."
+    if [ -d "$WORKSPACE_HOME/.git" ]; then
+      git -C "$WORKSPACE_HOME" pull origin main --quiet
+    else
+      # Re-install from scratch
+      curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash
+      exit $?
+    fi
+    NEW_VERSION=$(cat "$WORKSPACE_HOME/VERSION" 2>/dev/null || echo "unknown")
+    echo "workspace updated to $NEW_VERSION"
+    ;;
+  version|--version|-v)
+    echo "workspace $VERSION"
+    ;;
+  help|--help|-h|"")
+    usage
+    ;;
+  *)
+    echo "workspace: unknown command '$1'" >&2
+    echo "" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
