@@ -94,6 +94,13 @@ create_workspace_databases() {
   RAILS_ENV=test bin/rails db:create 2>/dev/null || true
   RAILS_ENV=test bin/rails db:schema:load 2>/dev/null || true
   ok "Test database ready"
+
+  # Seed
+  if [ -x bin/workspace-seed ]; then
+    step "Seeding"
+    bin/workspace-seed
+    ok "Seeded"
+  fi
 }
 
 # Drop workspace-specific databases.

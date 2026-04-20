@@ -29,6 +29,28 @@ assert_true ".superset/config.json created" [ -f .superset/config.json ]
 assert_true "superset config has setup script" grep -q 'workspace bootstrap' .superset/config.json
 assert_true "superset config has teardown script" grep -q 'workspace archive' .superset/config.json
 
+# ── init: creates bin/workspace-seed ────────────────────────────
+
+assert_true "bin/workspace-seed created" [ -f bin/workspace-seed ]
+assert_true "bin/workspace-seed is executable" [ -x bin/workspace-seed ]
+assert_true "seed file mentions fixtures" grep -q 'db:fixtures:load' bin/workspace-seed
+assert_true "seed file mentions db:seed" grep -q 'db:seed' bin/workspace-seed
+assert_true "seed file mentions custom rake" grep -q 'plan:seed' bin/workspace-seed
+
+# ── init: doesn't overwrite existing bin/workspace-seed ─────────
+
+app_dir=$(create_fake_app "init-seed-exists")
+cd "$app_dir"
+cat > bin/workspace-seed <<'EOF'
+#!/bin/sh
+bin/rails db:fixtures:load
+EOF
+chmod +x bin/workspace-seed
+
+run_init
+assert_true "bin/workspace-seed not overwritten" grep -q 'db:fixtures:load' bin/workspace-seed
+assert_false "no scaffold comments added" grep -q 'plan:seed' bin/workspace-seed
+
 # ── init: idempotent — doesn't overwrite existing configs ───────
 
 app_dir=$(create_fake_app "init-idempotent")

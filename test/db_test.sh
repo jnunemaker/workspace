@@ -116,4 +116,66 @@ YAML
   assert_true "test primary patched" [ -n "$test_match" ]
 fi
 
+# ── create_workspace_databases: runs bin/workspace-seed ──────────
+
+app_dir=$(create_fake_app "seed-runs")
+cd "$app_dir"
+
+# Fake bin/rails so db:create and db:schema:load don't fail
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+# Create a seed script that writes a marker file
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+touch .seed-ran
+SCRIPT
+chmod +x bin/workspace-seed
+
+WORKSPACE_NAME="test-ws"
+create_workspace_databases 2>/dev/null
+
+assert_true "bin/workspace-seed was executed" [ -f .seed-ran ]
+
+# ── create_workspace_databases: skips seed when not present ─────
+
+app_dir=$(create_fake_app "seed-missing")
+cd "$app_dir"
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+WORKSPACE_NAME="test-ws"
+create_workspace_databases 2>/dev/null
+
+assert_false "no seed without bin/workspace-seed" [ -f .seed-ran ]
+
+# ── create_workspace_databases: skips seed when not executable ──
+
+app_dir=$(create_fake_app "seed-not-executable")
+cd "$app_dir"
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+touch .seed-ran
+SCRIPT
+# deliberately NOT chmod +x
+
+WORKSPACE_NAME="test-ws"
+create_workspace_databases 2>/dev/null
+
+assert_false "non-executable seed is skipped" [ -f .seed-ran ]
+
 report "db.sh"
