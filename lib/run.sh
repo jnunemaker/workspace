@@ -71,8 +71,7 @@ fi
 # ── DB env vars ──────────────────────────────────────────────────
 
 if ! is_default_workspace; then
-  export DEV_ENV_NUMBER="_${WORKSPACE_NAME}"
-  export TEST_ENV_NUMBER="_${WORKSPACE_NAME}"
+  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 fi
 
 # ── Sweep ports ──────────────────────────────────────────────────

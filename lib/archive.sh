@@ -41,7 +41,7 @@ fi
 
 if [ -x bin/workspace-archive-hook ]; then
   header "Running archive hook"
-  DEV_ENV_NUMBER="_${WORKSPACE_NAME}" TEST_ENV_NUMBER="_${WORKSPACE_NAME}" bin/workspace-archive-hook
+  WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}" bin/workspace-archive-hook
 fi
 
 # ── Sweep ports ──────────────────────────────────────────────────

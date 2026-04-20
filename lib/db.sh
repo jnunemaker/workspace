@@ -3,7 +3,7 @@
 # Sourced by bootstrap and archive subcommands.
 
 # Patch config/database.yml to support workspace-specific database names.
-# Adds ERB suffixes using DEV_ENV_NUMBER and TEST_ENV_NUMBER.
+# Adds ERB suffixes using WORKSPACE_DB_SUFFIX.
 # Idempotent — skips if already patched.
 patch_database_yml() {
   local db_yml="config/database.yml"
@@ -14,8 +14,19 @@ patch_database_yml() {
   fi
 
   # Already patched?
-  if grep -q 'DEV_ENV_NUMBER' "$db_yml" 2>/dev/null || grep -q 'TEST_ENV_NUMBER' "$db_yml" 2>/dev/null; then
+  if grep -q 'WORKSPACE_DB_SUFFIX' "$db_yml" 2>/dev/null; then
     step "database.yml already supports workspace isolation"
+    return
+  fi
+
+  # Inject WORKSPACE_DB_SUFFIX before existing ENV_NUMBER vars
+  if grep -q 'DEV_ENV_NUMBER\|TEST_ENV_NUMBER' "$db_yml" 2>/dev/null; then
+    step "Adding WORKSPACE_DB_SUFFIX to database.yml (preserving existing env vars)"
+    sed -i '' \
+      -e 's/<%= ENV\["DEV_ENV_NUMBER"\] %>/<%= ENV["WORKSPACE_DB_SUFFIX"] %><%= ENV["DEV_ENV_NUMBER"] %>/g' \
+      -e 's/<%= ENV\["TEST_ENV_NUMBER"\] %>/<%= ENV["WORKSPACE_DB_SUFFIX"] %><%= ENV["TEST_ENV_NUMBER"] %>/g' \
+      "$db_yml"
+    ok "database.yml updated"
     return
   fi
 
@@ -50,8 +61,7 @@ patch_database_yml() {
       # Only patch development and test database lines
       if (env == "development" || env == "test") && !line.include?("<%")
         if m = line.match(/\A(\s+database:\s*)(\S+)\s*$/)
-          suffix_var = env == "development" ? "DEV_ENV_NUMBER" : "TEST_ENV_NUMBER"
-          result << "#{m[1]}#{m[2]}<%= ENV[\"#{suffix_var}\"] %>\n"
+          result << "#{m[1]}#{m[2]}<%= ENV[\"WORKSPACE_DB_SUFFIX\"] %>\n"
           next
         end
       end
@@ -71,8 +81,7 @@ create_workspace_databases() {
     return
   fi
 
-  export DEV_ENV_NUMBER="_${WORKSPACE_NAME}"
-  export TEST_ENV_NUMBER="_${WORKSPACE_NAME}"
+  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
   header "Creating workspace databases"
 
@@ -93,8 +102,7 @@ drop_workspace_databases() {
     return
   fi
 
-  export DEV_ENV_NUMBER="_${WORKSPACE_NAME}"
-  export TEST_ENV_NUMBER="_${WORKSPACE_NAME}"
+  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
   header "Dropping workspace databases"
 

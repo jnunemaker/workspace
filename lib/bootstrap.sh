@@ -128,8 +128,7 @@ fi
 
 # ── Export workspace DB env vars ─────────────────────────────────
 
-export DEV_ENV_NUMBER="_${WORKSPACE_NAME}"
-export TEST_ENV_NUMBER="_${WORKSPACE_NAME}"
+export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
 # ── Run app's own setup script ───────────────────────────────────
 
