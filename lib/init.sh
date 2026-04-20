@@ -4,9 +4,10 @@
 # Flow:
 #   1. Patch database.yml for workspace isolation (idempotent)
 #   2. Create conductor.json
-#   3. Create .superset/config.json
-#   4. Create .conductor/ directory
-#   5. Create bin/workspace-seed (commented scaffold)
+#   3. Create .superconductor/config.json
+#   4. Create .superset/config.json
+#   5. Create .conductor/ directory
+#   6. Create bin/workspace-seed (commented scaffold)
 
 set -e
 
@@ -44,6 +45,21 @@ if [ -d .conductor ]; then
 else
   mkdir -p .conductor
   ok "Created .conductor/"
+fi
+
+# ── Create .superconductor/config.json ──────────────────────────
+
+if [ -f .superconductor/config.json ]; then
+  step ".superconductor/config.json already exists"
+else
+  mkdir -p .superconductor
+  cat > .superconductor/config.json <<'EOF'
+{
+  "setup": ["workspace bootstrap"],
+  "run": ["workspace run"]
+}
+EOF
+  ok "Created .superconductor/config.json"
 fi
 
 # ── Create .superset/config.json ────────────────────────────────

@@ -28,10 +28,11 @@ header "Archiving workspace: $WORKSPACE_NAME"
 
 # ── Port derivation (same logic as run) ──────────────────────────
 
+_ws_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
 if [ -n "$CONDUCTOR_PORT" ]; then
   BASE_PORT=$CONDUCTOR_PORT
-elif [ -n "$SUPERSET_WORKSPACE_NAME" ] && [ "$SUPERSET_WORKSPACE_NAME" != "default" ]; then
-  _hash=$(printf '%s' "$SUPERSET_WORKSPACE_NAME" | cksum | awk '{print $1}')
+elif [ -n "$_ws_name" ] && [ "$_ws_name" != "default" ]; then
+  _hash=$(printf '%s' "$_ws_name" | cksum | awk '{print $1}')
   BASE_PORT=$(( ((_hash % 900) * 10) + 50000 ))
 else
   BASE_PORT=""

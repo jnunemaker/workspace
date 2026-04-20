@@ -23,6 +23,12 @@ assert_true "conductor.json has archive script" grep -q '"archive": "workspace a
 
 assert_true ".conductor/ directory created" [ -d .conductor ]
 
+# ── init: creates .superconductor/config.json ───────────────────
+
+assert_true ".superconductor/config.json created" [ -f .superconductor/config.json ]
+assert_true "superconductor config has setup script" grep -q 'workspace bootstrap' .superconductor/config.json
+assert_true "superconductor config has run script" grep -q 'workspace run' .superconductor/config.json
+
 # ── init: creates .superset/config.json ─────────────────────────
 
 assert_true ".superset/config.json created" [ -f .superset/config.json ]
@@ -65,6 +71,12 @@ cat > conductor.json <<'EOF'
 EOF
 
 mkdir -p .conductor
+mkdir -p .superconductor
+cat > .superconductor/config.json <<'EOF'
+{
+  "setup": ["bin/custom-setup"]
+}
+EOF
 mkdir -p .superset
 cat > .superset/config.json <<'EOF'
 {
@@ -75,6 +87,7 @@ EOF
 run_init
 
 assert_true "conductor.json not overwritten" grep -q 'custom-setup' conductor.json
+assert_true "superconductor config not overwritten" grep -q 'custom-setup' .superconductor/config.json
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
 
 # ── init: patches database.yml with WORKSPACE_DB_SUFFIX ─────────

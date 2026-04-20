@@ -17,11 +17,9 @@ divider() { printf "\n${_dim}─────────────────
 
 # ── Workspace name resolution ──────────────────────────────────────
 
-# Resolves workspace name and root path from Superset or Conductor env vars.
-# Sets: WORKSPACE_NAME, WORKSPACE_ROOT_PATH
 resolve_workspace() {
-  WORKSPACE_ROOT_PATH="${SUPERSET_ROOT_PATH:-$CONDUCTOR_ROOT_PATH}"
-  WORKSPACE_NAME="${SUPERSET_WORKSPACE_NAME:-$CONDUCTOR_WORKSPACE_NAME}"
+  WORKSPACE_ROOT_PATH="${SUPERCONDUCTOR_ROOT_PATH:-${SUPERSET_ROOT_PATH:-$CONDUCTOR_ROOT_PATH}}"
+  WORKSPACE_NAME="${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-$CONDUCTOR_WORKSPACE_NAME}}"
 
   # "default" is superset's name for the main branch — treat as no workspace
   if [ "$WORKSPACE_NAME" = "default" ]; then
@@ -40,8 +38,9 @@ is_default_workspace() {
 # Only applied to Superset workspace names (conductor names are assumed clean).
 # Sets: WORKSPACE_NAME (overwritten with sanitized value)
 sanitize_workspace_name() {
-  if [ -n "$SUPERSET_WORKSPACE_NAME" ] && [ "$SUPERSET_WORKSPACE_NAME" != "default" ]; then
-    WORKSPACE_NAME=$(printf '%s' "$SUPERSET_WORKSPACE_NAME" \
+  _raw_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
+  if [ -n "$_raw_name" ] && [ "$_raw_name" != "default" ]; then
+    WORKSPACE_NAME=$(printf '%s' "$_raw_name" \
       | tr -cs 'a-zA-Z0-9_-' '-' \
       | sed 's/--*/-/g; s/^-//; s/-$//' \
       | cut -c1-40 \

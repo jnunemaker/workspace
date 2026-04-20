@@ -4,9 +4,24 @@
 cd "$(dirname "$0")"
 . ./test_helper.sh
 
+# Clear any env vars from the host environment
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
+
 # ── resolve_workspace ────────────────────────────────────────────
 
+# Prefers SUPERCONDUCTOR vars over SUPERSET and CONDUCTOR vars
+SUPERCONDUCTOR_ROOT_PATH="/superconductor/root"
+SUPERCONDUCTOR_WORKSPACE_NAME="superconductor-ws"
+SUPERSET_ROOT_PATH="/superset/root"
+CONDUCTOR_ROOT_PATH="/conductor/root"
+SUPERSET_WORKSPACE_NAME="superset-ws"
+CONDUCTOR_WORKSPACE_NAME="conductor-ws"
+resolve_workspace
+assert_equal "prefers SUPERCONDUCTOR_ROOT_PATH" "/superconductor/root" "$WORKSPACE_ROOT_PATH"
+assert_equal "prefers SUPERCONDUCTOR_WORKSPACE_NAME" "superconductor-ws" "$WORKSPACE_NAME"
+
 # Prefers SUPERSET vars over CONDUCTOR vars
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME
 SUPERSET_ROOT_PATH="/superset/root"
 CONDUCTOR_ROOT_PATH="/conductor/root"
 SUPERSET_WORKSPACE_NAME="superset-ws"
@@ -15,8 +30,8 @@ resolve_workspace
 assert_equal "prefers SUPERSET_ROOT_PATH" "/superset/root" "$WORKSPACE_ROOT_PATH"
 assert_equal "prefers SUPERSET_WORKSPACE_NAME" "superset-ws" "$WORKSPACE_NAME"
 
-# Falls back to CONDUCTOR vars when SUPERSET not set
-unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME
+# Falls back to CONDUCTOR vars when SUPERSET and SUPERCONDUCTOR not set
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME
 CONDUCTOR_ROOT_PATH="/conductor/root"
 CONDUCTOR_WORKSPACE_NAME="conductor-ws"
 resolve_workspace
@@ -24,13 +39,13 @@ assert_equal "falls back to CONDUCTOR_ROOT_PATH" "/conductor/root" "$WORKSPACE_R
 assert_equal "falls back to CONDUCTOR_WORKSPACE_NAME" "conductor-ws" "$WORKSPACE_NAME"
 
 # "default" workspace is treated as no workspace
-unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH
 CONDUCTOR_WORKSPACE_NAME="default"
 resolve_workspace
 assert_equal "default becomes empty" "" "$WORKSPACE_NAME"
 
 # No vars set → empty
-unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
 resolve_workspace
 assert_equal "no vars → empty name" "" "$WORKSPACE_NAME"
 assert_equal "no vars → empty root" "" "$WORKSPACE_ROOT_PATH"
@@ -44,6 +59,8 @@ WORKSPACE_NAME="feature-branch"
 assert_false "named workspace is not default" is_default_workspace
 
 # ── sanitize_workspace_name ──────────────────────────────────────
+
+unset SUPERCONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
 
 # Clean name passes through unchanged
 SUPERSET_WORKSPACE_NAME="my-feature"
@@ -85,8 +102,8 @@ WORKSPACE_NAME="default"
 sanitize_workspace_name
 assert_equal "default skips sanitization" "default" "$WORKSPACE_NAME"
 
-# Only sanitizes SUPERSET names, not CONDUCTOR names
-unset SUPERSET_WORKSPACE_NAME
+# Only sanitizes SUPERSET/SUPERCONDUCTOR names, not CONDUCTOR names
+unset SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_WORKSPACE_NAME
 CONDUCTOR_WORKSPACE_NAME="feat/weird-name"
 resolve_workspace
 sanitize_workspace_name
@@ -106,6 +123,6 @@ detect_app_name
 assert_equal "hyphens to underscores" "hyphen_app" "$APP_NAME"
 
 # Clean up
-unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
 
 report "common.sh"

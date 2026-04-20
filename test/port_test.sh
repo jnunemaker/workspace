@@ -4,13 +4,17 @@
 cd "$(dirname "$0")"
 . ./test_helper.sh
 
+# Clear any env vars from the host environment
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
+
 # ── Port derivation helper (extracted from run.sh) ───────────────
 
 derive_port() {
+  _ws_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
   if [ -n "$CONDUCTOR_PORT" ]; then
     echo "$CONDUCTOR_PORT"
-  elif [ -n "$SUPERSET_WORKSPACE_NAME" ] && [ "$SUPERSET_WORKSPACE_NAME" != "default" ]; then
-    _hash=$(printf '%s' "$SUPERSET_WORKSPACE_NAME" | cksum | awk '{print $1}')
+  elif [ -n "$_ws_name" ] && [ "$_ws_name" != "default" ]; then
+    _hash=$(printf '%s' "$_ws_name" | cksum | awk '{print $1}')
     echo "$(( ((_hash % 900) * 10) + 50000 ))"
   else
     echo "3000"

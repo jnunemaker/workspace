@@ -16,7 +16,7 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
 | Command     | What it does                                                    |
 | ----------- | --------------------------------------------------------------- |
-| `init`      | Set up a project for workspace support (database.yml, conductor, superset configs) |
+| `init`      | Set up a project for workspace support (database.yml, superconductor, conductor, superset configs) |
 | `bootstrap` | Set up a workspace — symlink shared files, run app setup, create isolated DBs |
 | `run`       | Start the dev server for this workspace                         |
 | `archive`   | Tear down a workspace — kill processes, drop DBs                |
