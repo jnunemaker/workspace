@@ -36,6 +36,32 @@ Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next
 
 The root/default workspace is left alone — only siblings get isolated.
 
+## Hooks
+
+Place any of these in your project's `bin/` directory to customize the workspace lifecycle. They must be executable (`chmod +x`).
+
+| Hook | When it runs | How |
+| ---- | ------------ | --- |
+| `bin/workspace-bootstrap-hook` | After DB creation and `.workspace` file written | Executed |
+| `bin/workspace-run-hook` | Before foreman starts, after ports and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars for the server) |
+| `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
+
+Examples:
+
+```sh
+# bin/workspace-bootstrap-hook — seed the workspace dev database
+#!/bin/sh
+bin/rails db:seed
+
+# bin/workspace-run-hook — set an app-specific env var
+#!/bin/sh
+export DISABLE_SSL=true
+
+# bin/workspace-archive-hook — clean up external resources
+#!/bin/sh
+bin/rails runner "Tenant.find_by(suffix: ENV['WORKSPACE_DB_SUFFIX'])&.destroy"
+```
+
 ## Environment
 
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
