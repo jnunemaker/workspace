@@ -42,16 +42,19 @@ Place any of these in your project's `bin/` directory to customize the workspace
 
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
-| `bin/workspace-bootstrap-hook` | After DB creation and `.workspace` file written | Executed |
+| `bin/workspace-seed` | After workspace DB schema load (during bootstrap) | Executed |
+| `bin/workspace-bootstrap-hook` | After DB creation, seeding, and `.workspace` file written | Executed |
 | `bin/workspace-run-hook` | Before foreman starts, after ports and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars for the server) |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
+
+`workspace init` generates a scaffold `bin/workspace-seed` with commented examples — uncomment the line that matches your project.
 
 Examples:
 
 ```sh
-# bin/workspace-bootstrap-hook — seed the workspace dev database
+# bin/workspace-seed — load fixtures into the workspace database
 #!/bin/sh
-bin/rails db:seed
+RAILS_ENV=development bin/rails db:fixtures:load
 
 # bin/workspace-run-hook — set an app-specific env var
 #!/bin/sh
