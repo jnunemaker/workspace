@@ -22,6 +22,7 @@ usage() {
   echo "Usage: workspace <command>"
   echo ""
   echo "Commands:"
+  echo "  init       Set up a project for workspace support"
   echo "  bootstrap  Initialize a workspace (symlinks, deps, DB)"
   echo "  run        Start the dev server"
   echo "  archive    Tear down a workspace (kill processes, drop DBs)"
@@ -32,6 +33,10 @@ usage() {
 }
 
 case "${1:-}" in
+  init)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/init.sh" "$@"
+    ;;
   bootstrap)
     shift
     exec sh "$WORKSPACE_HOME/lib/bootstrap.sh" "$@"

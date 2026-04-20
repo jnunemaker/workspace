@@ -16,6 +16,7 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
 | Command     | What it does                                                    |
 | ----------- | --------------------------------------------------------------- |
+| `init`      | Set up a project for workspace support (database.yml, conductor, superset configs) |
 | `bootstrap` | Set up a workspace — symlink shared files, run app setup, create isolated DBs |
 | `run`       | Start the dev server for this workspace                         |
 | `archive`   | Tear down a workspace — kill processes, drop DBs                |
@@ -38,7 +39,7 @@ The root/default workspace is left alone — only siblings get isolated.
 ## Environment
 
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
-- `DEV_ENV_NUMBER` / `TEST_ENV_NUMBER` — exported during bootstrap as `_<workspace-name>`, used by the database.yml patch
+- `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
 
 ## Tests
 
