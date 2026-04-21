@@ -8,6 +8,7 @@
 #   4. Create .superset/config.json
 #   5. Create .conductor/ directory
 #   6. Create bin/workspace-seed (commented scaffold)
+#   7. Add .workspace to .gitignore
 
 set -e
 
@@ -101,6 +102,19 @@ else
 EOF
   chmod +x bin/workspace-seed
   ok "Created bin/workspace-seed (edit to configure seeding)"
+fi
+
+# ── Add .workspace to .gitignore ────────────────────────────────
+
+if [ -f .gitignore ] && grep -qxF '.workspace' .gitignore; then
+  step ".workspace already in .gitignore"
+elif [ -f .gitignore ]; then
+  [ -z "$(tail -c1 .gitignore 2>/dev/null)" ] || printf '\n' >> .gitignore
+  printf '.workspace\n' >> .gitignore
+  ok "Added .workspace to .gitignore"
+else
+  printf '.workspace\n' > .gitignore
+  ok "Created .gitignore with .workspace"
 fi
 
 printf "\n${_green}  ✓${_reset} ${_bold}Project is now workspace-ready${_reset}\n"

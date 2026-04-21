@@ -90,6 +90,39 @@ assert_true "conductor.json not overwritten" grep -q 'custom-setup' conductor.js
 assert_true "superconductor config not overwritten" grep -q 'custom-setup' .superconductor/config.json
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
 
+# ── init: adds .workspace to .gitignore ─────────────────────────
+
+# Creates .gitignore when missing
+app_dir=$(create_fake_app "init-gitignore-missing")
+cd "$app_dir"
+run_init
+assert_true ".gitignore created" [ -f .gitignore ]
+assert_true ".gitignore contains .workspace" grep -qxF '.workspace' .gitignore
+
+# Appends to existing .gitignore
+app_dir=$(create_fake_app "init-gitignore-existing")
+cd "$app_dir"
+printf 'node_modules\ntmp/\n' > .gitignore
+run_init
+assert_true "existing entry preserved" grep -qxF 'node_modules' .gitignore
+assert_true ".workspace appended" grep -qxF '.workspace' .gitignore
+
+# Idempotent — doesn't duplicate .workspace
+app_dir=$(create_fake_app "init-gitignore-idempotent")
+cd "$app_dir"
+printf '.workspace\n' > .gitignore
+run_init
+count=$(grep -cxF '.workspace' .gitignore)
+assert_equal ".workspace appears once" "1" "$count"
+
+# Handles .gitignore without trailing newline
+app_dir=$(create_fake_app "init-gitignore-no-newline")
+cd "$app_dir"
+printf 'tmp/' > .gitignore
+run_init
+assert_true "previous entry intact" grep -qxF 'tmp/' .gitignore
+assert_true ".workspace on its own line" grep -qxF '.workspace' .gitignore
+
 # ── init: patches database.yml with WORKSPACE_DB_SUFFIX ─────────
 
 if command -v ruby >/dev/null 2>&1; then
