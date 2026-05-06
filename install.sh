@@ -67,6 +67,8 @@ if [ "$PATH_ADDED" = "false" ]; then
   echo "    $PATH_LINE"
 fi
 
+sh "$WORKSPACE_HOME/lib/install_skill.sh"
+
 VERSION=$(cat "$WORKSPACE_HOME/VERSION" 2>/dev/null || echo "unknown")
 echo ""
 echo "workspace $VERSION installed successfully!"

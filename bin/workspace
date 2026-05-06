@@ -59,6 +59,7 @@ case "${1:-}" in
       curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash
       exit $?
     fi
+    sh "$WORKSPACE_HOME/lib/install_skill.sh"
     NEW_VERSION=$(cat "$WORKSPACE_HOME/VERSION" 2>/dev/null || echo "unknown")
     echo "workspace updated to $NEW_VERSION"
     ;;

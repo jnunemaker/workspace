@@ -65,10 +65,17 @@ export DISABLE_SSL=true
 bin/rails runner "Tenant.find_by(suffix: ENV['WORKSPACE_DB_SUFFIX'])&.destroy"
 ```
 
+## Claude Code skill
+
+If you have [Claude Code](https://claude.com/claude-code) installed, the installer also symlinks a skill into `~/.claude/skills/workspace/` so Claude knows how to drive this CLI (when to run `init` vs `bootstrap`, what the lifecycle hooks do, common workflows). It updates automatically whenever you run `workspace update`.
+
+To skip it, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` before running the installer.
+
 ## Environment
 
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
+- `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
 
 ## Tests
 
