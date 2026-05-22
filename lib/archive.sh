@@ -16,6 +16,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 resolve_workspace
 sanitize_workspace_name
+prefer_workspace_file
 
 # ── Default workspace: nothing to do ─────────────────────────────
 

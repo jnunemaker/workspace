@@ -32,6 +32,27 @@ is_default_workspace() {
   [ -z "$WORKSPACE_NAME" ]
 }
 
+# ── Prefer .workspace file over env var ───────────────────────────
+
+# .workspace is written by bootstrap with the name the dev/test databases
+# were created under. The workspace orchestrator (Conductor/Superset) can
+# pass a different name on later invocations — observed when the workspace
+# directory is renamed, or when the name is re-derived from the current
+# git branch tail. Trust the file so the DB suffix stays consistent with
+# what bootstrap actually created. Delete .workspace and rerun bootstrap
+# to genuinely re-key the workspace.
+#
+# Sets: WORKSPACE_NAME (overwritten with file content when file exists)
+prefer_workspace_file() {
+  [ -f .workspace ] || return 0
+  _file_workspace=$(cat .workspace)
+  [ -z "$_file_workspace" ] && return 0
+  if [ -n "$WORKSPACE_NAME" ] && [ "$_file_workspace" != "$WORKSPACE_NAME" ]; then
+    warn "Workspace name drift: env=\"$WORKSPACE_NAME\", .workspace=\"$_file_workspace\" — using the file."
+  fi
+  WORKSPACE_NAME="$_file_workspace"
+}
+
 # ── Workspace name sanitization ────────────────────────────────────
 
 # Sanitizes a workspace name for safe use in database names and file paths.

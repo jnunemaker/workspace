@@ -18,6 +18,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 resolve_workspace
 sanitize_workspace_name
+prefer_workspace_file
 detect_caddy
 detect_vite
 detect_foreman
