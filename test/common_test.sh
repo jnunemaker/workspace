@@ -109,6 +109,49 @@ resolve_workspace
 sanitize_workspace_name
 assert_equal "conductor names not sanitized" "feat/weird-name" "$WORKSPACE_NAME"
 
+# ── prefer_workspace_file ────────────────────────────────────────
+
+unset SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_WORKSPACE_NAME CONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
+
+# No file → WORKSPACE_NAME untouched
+mkdir -p "$TEST_TMP/no-file" && cd "$TEST_TMP/no-file"
+WORKSPACE_NAME="from-env"
+prefer_workspace_file
+assert_equal "no file leaves name alone" "from-env" "$WORKSPACE_NAME"
+
+# Empty file → WORKSPACE_NAME untouched (don't clobber to empty)
+mkdir -p "$TEST_TMP/empty-file" && cd "$TEST_TMP/empty-file"
+: > .workspace
+WORKSPACE_NAME="from-env"
+prefer_workspace_file
+assert_equal "empty file leaves name alone" "from-env" "$WORKSPACE_NAME"
+
+# File present and matches env → no warning, name unchanged
+mkdir -p "$TEST_TMP/match" && cd "$TEST_TMP/match"
+printf '%s' "atlanta" > .workspace
+WORKSPACE_NAME="atlanta"
+prefer_workspace_file >"$TEST_TMP/out" 2>&1
+assert_equal "matching file keeps name" "atlanta" "$WORKSPACE_NAME"
+assert_false "no warning when matching" [ -s "$TEST_TMP/out" ]
+
+# File present and differs from env → warn + file wins
+mkdir -p "$TEST_TMP/drift" && cd "$TEST_TMP/drift"
+printf '%s' "atlanta" > .workspace
+WORKSPACE_NAME="some-drifted-name"
+prefer_workspace_file >"$TEST_TMP/out" 2>&1
+assert_equal "file wins over drifted env" "atlanta" "$WORKSPACE_NAME"
+assert_true "warns on drift" grep -q "drift" "$TEST_TMP/out"
+
+# File present and env empty → file wins, no warning (no drift to report)
+mkdir -p "$TEST_TMP/env-empty" && cd "$TEST_TMP/env-empty"
+printf '%s' "atlanta" > .workspace
+WORKSPACE_NAME=""
+prefer_workspace_file >"$TEST_TMP/out" 2>&1
+assert_equal "file used when env empty" "atlanta" "$WORKSPACE_NAME"
+assert_false "no warning when env empty" [ -s "$TEST_TMP/out" ]
+
+cd "$TEST_DIR"
+
 # ── detect_app_name ──────────────────────────────────────────────
 
 # This test depends on the current directory name
