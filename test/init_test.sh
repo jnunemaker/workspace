@@ -95,6 +95,58 @@ assert_true "fallback uses default setup script" grep -q 'setup = "workspace boo
 assert_true "fallback uses default run script" grep -q 'run = "workspace run"' .conductor/settings.toml
 assert_true "fallback uses default archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
 
+# ── init: migration preserves non-script settings ───────────────
+
+app_dir=$(create_fake_app "init-migrate-settings")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "runScriptMode": "nonconcurrent",
+  "enterpriseDataPrivacy": true,
+  "scripts": {
+    "setup": "bin/legacy-setup"
+  }
+}
+EOF
+
+run_init
+
+assert_false "conductor.json removed after settings migration" [ -f conductor.json ]
+assert_true "string repo setting preserved" grep -q 'runScriptMode = "nonconcurrent"' .conductor/settings.toml
+assert_true "boolean repo setting preserved" grep -q 'enterpriseDataPrivacy = true' .conductor/settings.toml
+assert_true "scripts still migrated alongside settings" grep -q 'setup = "bin/legacy-setup"' .conductor/settings.toml
+assert_true "scalar settings precede the [scripts] table (valid TOML)" awk '/^\[/ && !t { t = NR } /^runScriptMode/ { s = NR } END { exit !(s && t && s < t) }' .conductor/settings.toml
+
+# ── init: migration preserves escaped quotes in script values ────
+
+app_dir=$(create_fake_app "init-migrate-escapes")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "scripts": {
+    "setup": "bin/rails runner \"puts :ok\""
+  }
+}
+EOF
+
+run_init
+
+assert_false "conductor.json removed after escaped-quote migration" [ -f conductor.json ]
+assert_true "escaped quotes preserved verbatim" grep -qF 'setup = "bin/rails runner \"puts :ok\""' .conductor/settings.toml
+
+# ── init: leaves an unconvertible conductor.json in place ────────
+
+app_dir=$(create_fake_app "init-migrate-unsupported")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{ "scripts": { "setup": { "too": "deep" } } }
+EOF
+
+run_init
+
+assert_true "unconvertible conductor.json kept" [ -f conductor.json ]
+assert_false "no settings.toml written on failed migration" [ -f .conductor/settings.toml ]
+
 # ── init: idempotent — doesn't overwrite existing configs ───────
 
 app_dir=$(create_fake_app "init-idempotent")

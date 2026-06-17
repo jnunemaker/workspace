@@ -15,14 +15,71 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
 
-# Convert the "scripts" object of a legacy conductor.json (read from stdin)
-# into TOML "key = value" lines, preserving order. Conductor's scripts are a
-# flat object of string values, so the first "}" closes the block.
-_conductor_scripts_to_toml() {
-  tr -d '\n' \
-    | sed -n 's/.*"scripts"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' \
-    | grep -o '"[^"]*"[[:space:]]*:[[:space:]]*"[^"]*"' \
-    | sed 's/"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1 = "\2"/'
+# Convert a legacy conductor.json (in the current directory) into the body of
+# .conductor/settings.toml, printed on stdout. Uses Ruby so JSON string escaping
+# survives and every repo setting is preserved — not just scripts. Adds the
+# default workspace scripts only when none are present. Exits non-zero (printing
+# nothing) when conductor.json is missing, malformed, or uses a structure we
+# can't migrate faithfully, so the caller can leave the original in place.
+_conductor_json_to_toml() {
+  ruby -e '
+    require "json"
+
+    def esc(s)
+      "\"" + s.gsub(/[\x00-\x1f\\"]/) { |c|
+        case c
+        when "\\" then "\\\\"
+        when "\"" then "\\\""
+        when "\n" then "\\n"
+        when "\t" then "\\t"
+        when "\r" then "\\r"
+        else "\\u%04X" % c.ord
+        end
+      } + "\""
+    end
+
+    def tkey(k)
+      k =~ /\A[A-Za-z0-9_-]+\z/ ? k : esc(k)
+    end
+
+    def tval(v)
+      case v
+      when String then esc(v)
+      when true, false then v.to_s
+      when Integer, Float then v.to_s
+      when Array
+        raise "unsupported array" unless v.all? { |e| String === e || true == e || false == e || Numeric === e }
+        "[" + v.map { |e| tval(e) }.join(", ") + "]"
+      else
+        raise "unsupported value"
+      end
+    end
+
+    data = JSON.parse(File.read("conductor.json"))
+    raise "not an object" unless Hash === data
+    unless data.key?("$schema")
+      data = { "$schema" => "https://conductor.build/schemas/settings.repo.schema.json" }.merge(data)
+    end
+    s = data["scripts"]
+    if s.nil? || (Hash === s && s.empty?)
+      data["scripts"] = { "setup" => "workspace bootstrap", "run" => "workspace run", "archive" => "workspace archive" }
+    end
+
+    scalars, tables = [], []
+    data.each { |k, v| (Hash === v ? tables : scalars) << [k, v] }
+
+    out = []
+    scalars.each { |k, v| out << "#{tkey(k)} = #{tval(v)}" }
+    tables.each do |k, tbl|
+      out << ""
+      out << "[#{tkey(k)}]"
+      tbl.each do |kk, vv|
+        raise "nested table" if Hash === vv
+        out << "#{tkey(kk)} = #{tval(vv)}"
+      end
+    end
+    print out.join("\n") + "\n"
+  '
 }
 
 header "Initializing workspace support"
@@ -37,17 +94,16 @@ if [ -f .conductor/settings.toml ]; then
   step ".conductor/settings.toml already exists"
 elif [ -f conductor.json ]; then
   # Conductor moved repo config from conductor.json to .conductor/settings.toml.
-  # Carry the existing scripts over, then drop the legacy file.
-  mkdir -p .conductor
-  _scripts=$(_conductor_scripts_to_toml < conductor.json)
-  if [ -z "$_scripts" ]; then
-    _scripts='setup = "workspace bootstrap"
-run = "workspace run"
-archive = "workspace archive"'
+  # Convert the whole file, and only drop the legacy one once it has migrated.
+  if _toml=$(_conductor_json_to_toml 2>/dev/null) && [ -n "$_toml" ]; then
+    mkdir -p .conductor
+    printf '%s\n' "$_toml" > .conductor/settings.toml
+    rm -f conductor.json
+    ok "Migrated conductor.json → .conductor/settings.toml"
+  else
+    warn "Couldn't safely migrate conductor.json — left it in place."
+    warn "Copy its settings into .conductor/settings.toml by hand, then delete it."
   fi
-  printf '"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"\n\n[scripts]\n%s\n' "$_scripts" > .conductor/settings.toml
-  rm -f conductor.json
-  ok "Migrated conductor.json → .conductor/settings.toml"
 else
   mkdir -p .conductor
   cat > .conductor/settings.toml <<'EOF'
