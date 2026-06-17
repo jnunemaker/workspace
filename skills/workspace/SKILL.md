@@ -20,13 +20,13 @@ Invoke when the user wants to:
 - **Customize the lifecycle** (seeding, per-workspace env vars, external cleanup) → edit a hook in `bin/`
 - **Debug workspace issues** (wrong DB name, missing symlink, hook not running)
 
-Strong signals you're in workspace territory: a `.workspace` file in the repo, a `conductor.json` / `.superconductor/config.json` / `.superset/config.json`, sibling directories like `myapp-feature-x` next to `myapp`, or the user mentioning Conductor / Superset / Superconductor.
+Strong signals you're in workspace territory: a `.workspace` file in the repo, a `.conductor/settings.toml` / `.superconductor/config.json` / `.superset/config.json`, sibling directories like `myapp-feature-x` next to `myapp`, or the user mentioning Conductor / Superset / Superconductor.
 
 ## Commands
 
 | Command | When to run | What it does |
 | --- | --- | --- |
-| `workspace init` | Once per project, in the root checkout | Patches `config/database.yml` for suffix-based isolation, creates `conductor.json`, `.superconductor/config.json`, `.superset/config.json`, `.conductor/`, scaffolds `bin/workspace-seed`, adds `.workspace` to `.gitignore`. Idempotent. |
+| `workspace init` | Once per project, in the root checkout | Patches `config/database.yml` for suffix-based isolation, creates `.conductor/settings.toml`, `.superconductor/config.json`, `.superset/config.json`, scaffolds `bin/workspace-seed`, adds `.workspace` to `.gitignore`. Idempotent. |
 | `workspace bootstrap` | In each sibling checkout, after cloning or `git worktree add` | Symlinks shared files from root, runs the project's setup script (`bin/setup`, `script/setup`, etc.), patches `database.yml`, creates suffixed DBs, writes `.workspace`, runs `bin/workspace-seed` then `bin/workspace-bootstrap-hook`. In the root checkout, just runs setup with no isolation. |
 | `workspace run` | To start the dev server in a sibling | Sources `bin/workspace-run-hook` (so it can `export` env vars), exports `WORKSPACE_DB_SUFFIX`, starts foreman. |
 | `workspace archive` | When you're done with a sibling workspace | Runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, drops the suffixed DBs. |

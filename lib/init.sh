@@ -3,12 +3,11 @@
 #
 # Flow:
 #   1. Patch database.yml for workspace isolation (idempotent)
-#   2. Create conductor.json
+#   2. Create .conductor/settings.toml
 #   3. Create .superconductor/config.json
 #   4. Create .superset/config.json
-#   5. Create .conductor/ directory
-#   6. Create bin/workspace-seed (commented scaffold)
-#   7. Add .workspace to .gitignore
+#   5. Create bin/workspace-seed (commented scaffold)
+#   6. Add .workspace to .gitignore
 
 set -e
 
@@ -22,30 +21,21 @@ header "Initializing workspace support"
 
 patch_database_yml
 
-# ── Create conductor.json ───────────────────────────────────────
+# ── Create .conductor/settings.toml ─────────────────────────────
 
-if [ -f conductor.json ]; then
-  step "conductor.json already exists"
-else
-  cat > conductor.json <<'EOF'
-{
-  "scripts": {
-    "setup": "workspace bootstrap",
-    "run": "workspace run",
-    "archive": "workspace archive"
-  }
-}
-EOF
-  ok "Created conductor.json"
-fi
-
-# ── Create .conductor/ directory ────────────────────────────────
-
-if [ -d .conductor ]; then
-  step ".conductor/ already exists"
+if [ -f .conductor/settings.toml ]; then
+  step ".conductor/settings.toml already exists"
 else
   mkdir -p .conductor
-  ok "Created .conductor/"
+  cat > .conductor/settings.toml <<'EOF'
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "workspace bootstrap"
+run = "workspace run"
+archive = "workspace archive"
+EOF
+  ok "Created .conductor/settings.toml"
 fi
 
 # ── Create .superconductor/config.json ──────────────────────────

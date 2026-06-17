@@ -8,20 +8,18 @@ run_init() {
   sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1
 }
 
-# ── init: creates conductor.json ────────────────────────────────
+# ── init: creates .conductor/settings.toml ──────────────────────
 
 app_dir=$(create_fake_app "init-conductor")
 cd "$app_dir"
 run_init
 
-assert_true "conductor.json created" [ -f conductor.json ]
-assert_true "conductor.json has setup script" grep -q '"setup": "workspace bootstrap"' conductor.json
-assert_true "conductor.json has run script" grep -q '"run": "workspace run"' conductor.json
-assert_true "conductor.json has archive script" grep -q '"archive": "workspace archive"' conductor.json
-
-# ── init: creates .conductor/ directory ─────────────────────────
-
-assert_true ".conductor/ directory created" [ -d .conductor ]
+assert_true ".conductor/settings.toml created" [ -f .conductor/settings.toml ]
+assert_true "settings.toml has schema" grep -q 'settings.repo.schema.json' .conductor/settings.toml
+assert_true "settings.toml has scripts table" grep -q '\[scripts\]' .conductor/settings.toml
+assert_true "settings.toml has setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
+assert_true "settings.toml has run script" grep -q 'run = "workspace run"' .conductor/settings.toml
+assert_true "settings.toml has archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
 
 # ── init: creates .superconductor/config.json ───────────────────
 
@@ -62,15 +60,12 @@ assert_false "no scaffold comments added" grep -q 'plan:seed' bin/workspace-seed
 app_dir=$(create_fake_app "init-idempotent")
 cd "$app_dir"
 
-cat > conductor.json <<'EOF'
-{
-  "scripts": {
-    "setup": "bin/custom-setup"
-  }
-}
+mkdir -p .conductor
+cat > .conductor/settings.toml <<'EOF'
+[scripts]
+setup = "bin/custom-setup"
 EOF
 
-mkdir -p .conductor
 mkdir -p .superconductor
 cat > .superconductor/config.json <<'EOF'
 {
@@ -86,7 +81,7 @@ EOF
 
 run_init
 
-assert_true "conductor.json not overwritten" grep -q 'custom-setup' conductor.json
+assert_true "settings.toml not overwritten" grep -q 'custom-setup' .conductor/settings.toml
 assert_true "superconductor config not overwritten" grep -q 'custom-setup' .superconductor/config.json
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
 
