@@ -55,6 +55,30 @@ run_init
 assert_true "bin/workspace-seed not overwritten" grep -q 'db:fixtures:load' bin/workspace-seed
 assert_false "no scaffold comments added" grep -q 'plan:seed' bin/workspace-seed
 
+# ── init: migrates a legacy conductor.json ──────────────────────
+
+app_dir=$(create_fake_app "init-migrate-conductor")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "scripts": {
+    "setup": "bin/legacy-setup",
+    "run": "bin/legacy-run",
+    "archive": "bin/legacy-archive"
+  }
+}
+EOF
+
+run_init
+
+assert_false "legacy conductor.json removed" [ -f conductor.json ]
+assert_true "settings.toml created from migration" [ -f .conductor/settings.toml ]
+assert_true "migration keeps schema" grep -q 'settings.repo.schema.json' .conductor/settings.toml
+assert_true "migration has scripts table" grep -q '\[scripts\]' .conductor/settings.toml
+assert_true "migrated setup script" grep -q 'setup = "bin/legacy-setup"' .conductor/settings.toml
+assert_true "migrated run script" grep -q 'run = "bin/legacy-run"' .conductor/settings.toml
+assert_true "migrated archive script" grep -q 'archive = "bin/legacy-archive"' .conductor/settings.toml
+
 # ── init: idempotent — doesn't overwrite existing configs ───────
 
 app_dir=$(create_fake_app "init-idempotent")

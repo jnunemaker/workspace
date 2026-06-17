@@ -3,7 +3,7 @@
 #
 # Flow:
 #   1. Patch database.yml for workspace isolation (idempotent)
-#   2. Create .conductor/settings.toml
+#   2. Create .conductor/settings.toml (migrating a legacy conductor.json)
 #   3. Create .superconductor/config.json
 #   4. Create .superset/config.json
 #   5. Create bin/workspace-seed (commented scaffold)
@@ -15,6 +15,16 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
 
+# Convert the "scripts" object of a legacy conductor.json (read from stdin)
+# into TOML "key = value" lines, preserving order. Conductor's scripts are a
+# flat object of string values, so the first "}" closes the block.
+_conductor_scripts_to_toml() {
+  tr -d '\n' \
+    | sed -n 's/.*"scripts"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' \
+    | grep -o '"[^"]*"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed 's/"\([^"]*\)"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1 = "\2"/'
+}
+
 header "Initializing workspace support"
 
 # ── Patch database.yml ──────────────────────────────────────────
@@ -25,6 +35,19 @@ patch_database_yml
 
 if [ -f .conductor/settings.toml ]; then
   step ".conductor/settings.toml already exists"
+elif [ -f conductor.json ]; then
+  # Conductor moved repo config from conductor.json to .conductor/settings.toml.
+  # Carry the existing scripts over, then drop the legacy file.
+  mkdir -p .conductor
+  _scripts=$(_conductor_scripts_to_toml < conductor.json)
+  if [ -z "$_scripts" ]; then
+    _scripts='setup = "workspace bootstrap"
+run = "workspace run"
+archive = "workspace archive"'
+  fi
+  printf '"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"\n\n[scripts]\n%s\n' "$_scripts" > .conductor/settings.toml
+  rm -f conductor.json
+  ok "Migrated conductor.json → .conductor/settings.toml"
 else
   mkdir -p .conductor
   cat > .conductor/settings.toml <<'EOF'
