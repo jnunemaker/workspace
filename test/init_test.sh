@@ -79,6 +79,22 @@ assert_true "migrated setup script" grep -q 'setup = "bin/legacy-setup"' .conduc
 assert_true "migrated run script" grep -q 'run = "bin/legacy-run"' .conductor/settings.toml
 assert_true "migrated archive script" grep -q 'archive = "bin/legacy-archive"' .conductor/settings.toml
 
+# ── init: migrating a scriptless conductor.json falls back to defaults ──
+
+app_dir=$(create_fake_app "init-migrate-empty")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{}
+EOF
+
+run_init
+
+assert_false "scriptless conductor.json removed" [ -f conductor.json ]
+assert_true "fallback settings.toml created" [ -f .conductor/settings.toml ]
+assert_true "fallback uses default setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
+assert_true "fallback uses default run script" grep -q 'run = "workspace run"' .conductor/settings.toml
+assert_true "fallback uses default archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
+
 # ── init: idempotent — doesn't overwrite existing configs ───────
 
 app_dir=$(create_fake_app "init-idempotent")
