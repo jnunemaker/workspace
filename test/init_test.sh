@@ -95,7 +95,9 @@ assert_true "fallback uses default setup script" grep -q 'setup = "workspace boo
 assert_true "fallback uses default run script" grep -q 'run = "workspace run"' .conductor/settings.toml
 assert_true "fallback uses default archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
 
-# ── init: migration preserves non-script settings ───────────────
+# ── init: maps legacy settings to their new schema names ────────
+# The repo schema is additionalProperties:false, so legacy field names must be
+# translated (not passed through verbatim) or Conductor rejects them.
 
 app_dir=$(create_fake_app "init-migrate-settings")
 cd "$app_dir"
@@ -112,10 +114,27 @@ EOF
 run_init
 
 assert_false "conductor.json removed after settings migration" [ -f conductor.json ]
-assert_true "string repo setting preserved" grep -q 'runScriptMode = "nonconcurrent"' .conductor/settings.toml
-assert_true "boolean repo setting preserved" grep -q 'enterpriseDataPrivacy = true' .conductor/settings.toml
+assert_true "runScriptMode mapped to scripts.run_mode" grep -q 'run_mode = "nonconcurrent"' .conductor/settings.toml
+assert_true "enterpriseDataPrivacy mapped to enterprise_data_privacy" grep -q 'enterprise_data_privacy = true' .conductor/settings.toml
 assert_true "scripts still migrated alongside settings" grep -q 'setup = "bin/legacy-setup"' .conductor/settings.toml
-assert_true "scalar settings precede the [scripts] table (valid TOML)" awk '/^\[/ && !t { t = NR } /^runScriptMode/ { s = NR } END { exit !(s && t && s < t) }' .conductor/settings.toml
+assert_false "legacy camelCase key not written verbatim" grep -q 'runScriptMode' .conductor/settings.toml
+assert_false "legacy privacy key not written verbatim" grep -q 'enterpriseDataPrivacy' .conductor/settings.toml
+assert_true "top-level scalar precedes the [scripts] table (valid TOML)" awk '/^\[/ && !t { t = NR } /^enterprise_data_privacy/ { s = NR } END { exit !(s && t && s < t) }' .conductor/settings.toml
+
+# ── init: refuses to migrate an unknown legacy field ────────────
+# A field outside the documented legacy set could map to anything (or nothing);
+# leave conductor.json alone rather than guess or drop it.
+
+app_dir=$(create_fake_app "init-migrate-unknown-field")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{ "scripts": { "setup": "x" }, "somethingNew": 1 }
+EOF
+
+run_init
+
+assert_true "conductor.json with unknown field kept" [ -f conductor.json ]
+assert_false "no settings.toml written for unknown field" [ -f .conductor/settings.toml ]
 
 # ── init: migration preserves escaped quotes in script values ────
 

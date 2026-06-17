@@ -16,11 +16,18 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/db.sh"
 
 # Convert a legacy conductor.json (in the current directory) into the body of
-# .conductor/settings.toml, printed on stdout. Uses Ruby so JSON string escaping
-# survives and every repo setting is preserved — not just scripts. Adds the
-# default workspace scripts only when none are present. Exits non-zero (printing
-# nothing) when conductor.json is missing, malformed, or uses a structure we
-# can't migrate faithfully, so the caller can leave the original in place.
+# .conductor/settings.toml, printed on stdout. Legacy conductor.json is a closed,
+# documented format with exactly three fields, which map to new names that the
+# repo schema (additionalProperties: false) requires:
+#
+#   scripts.{setup,run,archive} → scripts.{setup,run,archive}  (unchanged)
+#   runScriptMode               → scripts.run_mode
+#   enterpriseDataPrivacy       → enterprise_data_privacy
+#
+# Uses Ruby so JSON string escaping survives. Fills the default workspace scripts
+# only when none are present. Exits non-zero (printing nothing) when conductor.json
+# is missing, malformed, or carries a field outside that documented set, so the
+# caller can leave the original in place rather than emit schema-invalid output.
 _conductor_json_to_toml() {
   ruby -e '
     require "json"
@@ -38,46 +45,42 @@ _conductor_json_to_toml() {
       } + "\""
     end
 
-    def tkey(k)
-      k =~ /\A[A-Za-z0-9_-]+\z/ ? k : esc(k)
-    end
-
-    def tval(v)
-      case v
-      when String then esc(v)
-      when true, false then v.to_s
-      when Integer, Float then v.to_s
-      when Array
-        raise "unsupported array" unless v.all? { |e| String === e || true == e || false == e || Numeric === e }
-        "[" + v.map { |e| tval(e) }.join(", ") + "]"
-      else
-        raise "unsupported value"
-      end
-    end
-
     data = JSON.parse(File.read("conductor.json"))
     raise "not an object" unless Hash === data
-    unless data.key?("$schema")
-      data = { "$schema" => "https://conductor.build/schemas/settings.repo.schema.json" }.merge(data)
-    end
-    s = data["scripts"]
-    if s.nil? || (Hash === s && s.empty?)
-      data["scripts"] = { "setup" => "workspace bootstrap", "run" => "workspace run", "archive" => "workspace archive" }
-    end
+    data.each_key { |k| raise "unknown field: #{k}" unless ["$schema", "scripts", "runScriptMode", "enterpriseDataPrivacy"].include?(k) }
 
-    scalars, tables = [], []
-    data.each { |k, v| (Hash === v ? tables : scalars) << [k, v] }
+    scripts = data.fetch("scripts", {})
+    raise "scripts not an object" unless Hash === scripts
+    scripts.each do |k, v|
+      raise "unknown script: #{k}" unless ["setup", "run", "archive"].include?(k)
+      raise "non-string script: #{k}" unless String === v
+    end
 
     out = []
-    scalars.each { |k, v| out << "#{tkey(k)} = #{tval(v)}" }
-    tables.each do |k, tbl|
-      out << ""
-      out << "[#{tkey(k)}]"
-      tbl.each do |kk, vv|
-        raise "nested table" if Hash === vv
-        out << "#{tkey(kk)} = #{tval(vv)}"
-      end
+    out << esc("$schema") + " = " + esc("https://conductor.build/schemas/settings.repo.schema.json")
+
+    if data.key?("enterpriseDataPrivacy")
+      v = data["enterpriseDataPrivacy"]
+      raise "enterpriseDataPrivacy not a boolean" unless v == true || v == false
+      out << "enterprise_data_privacy = #{v}"
     end
+
+    out << ""
+    out << "[scripts]"
+    present = ["setup", "run", "archive"].select { |k| scripts.key?(k) }
+    if present.empty?
+      out << "setup = " + esc("workspace bootstrap")
+      out << "run = " + esc("workspace run")
+      out << "archive = " + esc("workspace archive")
+    else
+      present.each { |k| out << "#{k} = #{esc(scripts[k])}" }
+    end
+    if data.key?("runScriptMode")
+      v = data["runScriptMode"]
+      raise "runScriptMode not a string" unless String === v
+      out << "run_mode = #{esc(v)}"
+    end
+
     print out.join("\n") + "\n"
   '
 }
