@@ -8,20 +8,18 @@ run_init() {
   sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1
 }
 
-# ── init: creates conductor.json ────────────────────────────────
+# ── init: creates .conductor/settings.toml ──────────────────────
 
 app_dir=$(create_fake_app "init-conductor")
 cd "$app_dir"
 run_init
 
-assert_true "conductor.json created" [ -f conductor.json ]
-assert_true "conductor.json has setup script" grep -q '"setup": "workspace bootstrap"' conductor.json
-assert_true "conductor.json has run script" grep -q '"run": "workspace run"' conductor.json
-assert_true "conductor.json has archive script" grep -q '"archive": "workspace archive"' conductor.json
-
-# ── init: creates .conductor/ directory ─────────────────────────
-
-assert_true ".conductor/ directory created" [ -d .conductor ]
+assert_true ".conductor/settings.toml created" [ -f .conductor/settings.toml ]
+assert_true "settings.toml has schema" grep -q 'settings.repo.schema.json' .conductor/settings.toml
+assert_true "settings.toml has scripts table" grep -q '\[scripts\]' .conductor/settings.toml
+assert_true "settings.toml has setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
+assert_true "settings.toml has run script" grep -q 'run = "workspace run"' .conductor/settings.toml
+assert_true "settings.toml has archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
 
 # ── init: creates .superconductor/config.json ───────────────────
 
@@ -57,20 +55,128 @@ run_init
 assert_true "bin/workspace-seed not overwritten" grep -q 'db:fixtures:load' bin/workspace-seed
 assert_false "no scaffold comments added" grep -q 'plan:seed' bin/workspace-seed
 
+# ── init: migrates a legacy conductor.json ──────────────────────
+
+app_dir=$(create_fake_app "init-migrate-conductor")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "scripts": {
+    "setup": "bin/legacy-setup",
+    "run": "bin/legacy-run",
+    "archive": "bin/legacy-archive"
+  }
+}
+EOF
+
+run_init
+
+assert_false "legacy conductor.json removed" [ -f conductor.json ]
+assert_true "settings.toml created from migration" [ -f .conductor/settings.toml ]
+assert_true "migration keeps schema" grep -q 'settings.repo.schema.json' .conductor/settings.toml
+assert_true "migration has scripts table" grep -q '\[scripts\]' .conductor/settings.toml
+assert_true "migrated setup script" grep -q 'setup = "bin/legacy-setup"' .conductor/settings.toml
+assert_true "migrated run script" grep -q 'run = "bin/legacy-run"' .conductor/settings.toml
+assert_true "migrated archive script" grep -q 'archive = "bin/legacy-archive"' .conductor/settings.toml
+
+# ── init: migrating a scriptless conductor.json falls back to defaults ──
+
+app_dir=$(create_fake_app "init-migrate-empty")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{}
+EOF
+
+run_init
+
+assert_false "scriptless conductor.json removed" [ -f conductor.json ]
+assert_true "fallback settings.toml created" [ -f .conductor/settings.toml ]
+assert_true "fallback uses default setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
+assert_true "fallback uses default run script" grep -q 'run = "workspace run"' .conductor/settings.toml
+assert_true "fallback uses default archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
+
+# ── init: maps legacy settings to their new schema names ────────
+# The repo schema is additionalProperties:false, so legacy field names must be
+# translated (not passed through verbatim) or Conductor rejects them.
+
+app_dir=$(create_fake_app "init-migrate-settings")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "runScriptMode": "nonconcurrent",
+  "enterpriseDataPrivacy": true,
+  "scripts": {
+    "setup": "bin/legacy-setup"
+  }
+}
+EOF
+
+run_init
+
+assert_false "conductor.json removed after settings migration" [ -f conductor.json ]
+assert_true "runScriptMode mapped to scripts.run_mode" grep -q 'run_mode = "nonconcurrent"' .conductor/settings.toml
+assert_true "enterpriseDataPrivacy mapped to enterprise_data_privacy" grep -q 'enterprise_data_privacy = true' .conductor/settings.toml
+assert_true "scripts still migrated alongside settings" grep -q 'setup = "bin/legacy-setup"' .conductor/settings.toml
+assert_false "legacy camelCase key not written verbatim" grep -q 'runScriptMode' .conductor/settings.toml
+assert_false "legacy privacy key not written verbatim" grep -q 'enterpriseDataPrivacy' .conductor/settings.toml
+assert_true "top-level scalar precedes the [scripts] table (valid TOML)" awk '/^\[/ && !t { t = NR } /^enterprise_data_privacy/ { s = NR } END { exit !(s && t && s < t) }' .conductor/settings.toml
+
+# ── init: refuses to migrate an unknown legacy field ────────────
+# A field outside the documented legacy set could map to anything (or nothing);
+# leave conductor.json alone rather than guess or drop it.
+
+app_dir=$(create_fake_app "init-migrate-unknown-field")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{ "scripts": { "setup": "x" }, "somethingNew": 1 }
+EOF
+
+run_init
+
+assert_true "conductor.json with unknown field kept" [ -f conductor.json ]
+assert_false "no settings.toml written for unknown field" [ -f .conductor/settings.toml ]
+
+# ── init: migration preserves escaped quotes in script values ────
+
+app_dir=$(create_fake_app "init-migrate-escapes")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "scripts": {
+    "setup": "bin/rails runner \"puts :ok\""
+  }
+}
+EOF
+
+run_init
+
+assert_false "conductor.json removed after escaped-quote migration" [ -f conductor.json ]
+assert_true "escaped quotes preserved verbatim" grep -qF 'setup = "bin/rails runner \"puts :ok\""' .conductor/settings.toml
+
+# ── init: leaves an unconvertible conductor.json in place ────────
+
+app_dir=$(create_fake_app "init-migrate-unsupported")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{ "scripts": { "setup": { "too": "deep" } } }
+EOF
+
+run_init
+
+assert_true "unconvertible conductor.json kept" [ -f conductor.json ]
+assert_false "no settings.toml written on failed migration" [ -f .conductor/settings.toml ]
+
 # ── init: idempotent — doesn't overwrite existing configs ───────
 
 app_dir=$(create_fake_app "init-idempotent")
 cd "$app_dir"
 
-cat > conductor.json <<'EOF'
-{
-  "scripts": {
-    "setup": "bin/custom-setup"
-  }
-}
+mkdir -p .conductor
+cat > .conductor/settings.toml <<'EOF'
+[scripts]
+setup = "bin/custom-setup"
 EOF
 
-mkdir -p .conductor
 mkdir -p .superconductor
 cat > .superconductor/config.json <<'EOF'
 {
@@ -86,7 +192,7 @@ EOF
 
 run_init
 
-assert_true "conductor.json not overwritten" grep -q 'custom-setup' conductor.json
+assert_true "settings.toml not overwritten" grep -q 'custom-setup' .conductor/settings.toml
 assert_true "superconductor config not overwritten" grep -q 'custom-setup' .superconductor/config.json
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
 

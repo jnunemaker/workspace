@@ -3,12 +3,11 @@
 #
 # Flow:
 #   1. Patch database.yml for workspace isolation (idempotent)
-#   2. Create conductor.json
+#   2. Create .conductor/settings.toml (migrating a legacy conductor.json)
 #   3. Create .superconductor/config.json
 #   4. Create .superset/config.json
-#   5. Create .conductor/ directory
-#   6. Create bin/workspace-seed (commented scaffold)
-#   7. Add .workspace to .gitignore
+#   5. Create bin/workspace-seed (commented scaffold)
+#   6. Add .workspace to .gitignore
 
 set -e
 
@@ -16,36 +15,109 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
 
+# Convert a legacy conductor.json (in the current directory) into the body of
+# .conductor/settings.toml, printed on stdout. Legacy conductor.json is a closed,
+# documented format with exactly three fields, which map to new names that the
+# repo schema (additionalProperties: false) requires:
+#
+#   scripts.{setup,run,archive} → scripts.{setup,run,archive}  (unchanged)
+#   runScriptMode               → scripts.run_mode
+#   enterpriseDataPrivacy       → enterprise_data_privacy
+#
+# Uses Ruby so JSON string escaping survives. Fills the default workspace scripts
+# only when none are present. Exits non-zero (printing nothing) when conductor.json
+# is missing, malformed, or carries a field outside that documented set, so the
+# caller can leave the original in place rather than emit schema-invalid output.
+_conductor_json_to_toml() {
+  ruby -e '
+    require "json"
+
+    def esc(s)
+      "\"" + s.gsub(/[\x00-\x1f\\"]/) { |c|
+        case c
+        when "\\" then "\\\\"
+        when "\"" then "\\\""
+        when "\n" then "\\n"
+        when "\t" then "\\t"
+        when "\r" then "\\r"
+        else "\\u%04X" % c.ord
+        end
+      } + "\""
+    end
+
+    data = JSON.parse(File.read("conductor.json"))
+    raise "not an object" unless Hash === data
+    data.each_key { |k| raise "unknown field: #{k}" unless ["$schema", "scripts", "runScriptMode", "enterpriseDataPrivacy"].include?(k) }
+
+    scripts = data.fetch("scripts", {})
+    raise "scripts not an object" unless Hash === scripts
+    scripts.each do |k, v|
+      raise "unknown script: #{k}" unless ["setup", "run", "archive"].include?(k)
+      raise "non-string script: #{k}" unless String === v
+    end
+
+    out = []
+    out << esc("$schema") + " = " + esc("https://conductor.build/schemas/settings.repo.schema.json")
+
+    if data.key?("enterpriseDataPrivacy")
+      v = data["enterpriseDataPrivacy"]
+      raise "enterpriseDataPrivacy not a boolean" unless v == true || v == false
+      out << "enterprise_data_privacy = #{v}"
+    end
+
+    out << ""
+    out << "[scripts]"
+    present = ["setup", "run", "archive"].select { |k| scripts.key?(k) }
+    if present.empty?
+      out << "setup = " + esc("workspace bootstrap")
+      out << "run = " + esc("workspace run")
+      out << "archive = " + esc("workspace archive")
+    else
+      present.each { |k| out << "#{k} = #{esc(scripts[k])}" }
+    end
+    if data.key?("runScriptMode")
+      v = data["runScriptMode"]
+      raise "runScriptMode not a string" unless String === v
+      out << "run_mode = #{esc(v)}"
+    end
+
+    print out.join("\n") + "\n"
+  '
+}
+
 header "Initializing workspace support"
 
 # ── Patch database.yml ──────────────────────────────────────────
 
 patch_database_yml
 
-# ── Create conductor.json ───────────────────────────────────────
+# ── Create .conductor/settings.toml ─────────────────────────────
 
-if [ -f conductor.json ]; then
-  step "conductor.json already exists"
-else
-  cat > conductor.json <<'EOF'
-{
-  "scripts": {
-    "setup": "workspace bootstrap",
-    "run": "workspace run",
-    "archive": "workspace archive"
-  }
-}
-EOF
-  ok "Created conductor.json"
-fi
-
-# ── Create .conductor/ directory ────────────────────────────────
-
-if [ -d .conductor ]; then
-  step ".conductor/ already exists"
+if [ -f .conductor/settings.toml ]; then
+  step ".conductor/settings.toml already exists"
+elif [ -f conductor.json ]; then
+  # Conductor moved repo config from conductor.json to .conductor/settings.toml.
+  # Convert the whole file, and only drop the legacy one once it has migrated.
+  if _toml=$(_conductor_json_to_toml 2>/dev/null) && [ -n "$_toml" ]; then
+    mkdir -p .conductor
+    printf '%s\n' "$_toml" > .conductor/settings.toml
+    rm -f conductor.json
+    ok "Migrated conductor.json → .conductor/settings.toml"
+  else
+    warn "Couldn't safely migrate conductor.json — left it in place."
+    warn "Copy its settings into .conductor/settings.toml by hand, then delete it."
+  fi
 else
   mkdir -p .conductor
-  ok "Created .conductor/"
+  cat > .conductor/settings.toml <<'EOF'
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "workspace bootstrap"
+run = "workspace run"
+archive = "workspace archive"
+EOF
+  ok "Created .conductor/settings.toml"
 fi
 
 # ── Create .superconductor/config.json ──────────────────────────
