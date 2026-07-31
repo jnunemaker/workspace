@@ -121,3 +121,34 @@ drop_workspace_databases() {
   RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
   ok "Test database dropped"
 }
+
+# Drop databases for unattended reconciliation. Unlike the legacy archive path,
+# failures are returned so the registry record can be retained for a retry.
+drop_workspace_databases_strict() {
+  if is_default_workspace; then
+    return 0
+  fi
+
+  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+  _drop_failed=0
+
+  header "Dropping workspace databases"
+
+  step "Dropping dev database"
+  if RAILS_ENV=development bin/rails db:drop 2>/dev/null; then
+    ok "Dev database dropped"
+  else
+    warn "Could not drop dev database"
+    _drop_failed=1
+  fi
+
+  step "Dropping test database"
+  if RAILS_ENV=test bin/rails db:drop 2>/dev/null; then
+    ok "Test database dropped"
+  else
+    warn "Could not drop test database"
+    _drop_failed=1
+  fi
+
+  [ "$_drop_failed" -eq 0 ]
+}

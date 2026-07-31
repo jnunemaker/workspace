@@ -28,22 +28,21 @@ detect_foreman
   echo "Usage: workspace run"
   echo ""
   echo "Starts the dev server for a workspace."
-  echo "Ports are derived from CONDUCTOR_PORT or SUPERSET_WORKSPACE_NAME."
+  echo "Ports are derived from CONDUCTOR_PORT or the detected workspace name."
   exit 0
 }
 
+# Reconcile resources from externally removed Git worktrees before starting a
+# new server, without adding work for existing providers or empty repos.
+if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
+  [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
+  sh "$WORKSPACE_LIB/prune.sh" --quiet
+fi
+
 # ── Port derivation ──────────────────────────────────────────────
 
-# Priority: CONDUCTOR_PORT > hash(SUPERSET_WORKSPACE_NAME) > default 3000
-_ws_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
-if [ -n "$CONDUCTOR_PORT" ]; then
-  BASE_PORT=$CONDUCTOR_PORT
-elif [ -n "$_ws_name" ] && [ "$_ws_name" != "default" ]; then
-  _hash=$(printf '%s' "$_ws_name" | cksum | awk '{print $1}')
-  BASE_PORT=$(( ((_hash % 900) * 10) + 50000 ))
-else
-  BASE_PORT=3000
-fi
+# Priority and legacy defaults are centralized in common.sh.
+BASE_PORT=$(derive_workspace_port "3000")
 
 # Validate port is numeric
 case "$BASE_PORT" in

@@ -10,15 +10,7 @@ unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORK
 # ── Port derivation helper (extracted from run.sh) ───────────────
 
 derive_port() {
-  _ws_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
-  if [ -n "$CONDUCTOR_PORT" ]; then
-    echo "$CONDUCTOR_PORT"
-  elif [ -n "$_ws_name" ] && [ "$_ws_name" != "default" ]; then
-    _hash=$(printf '%s' "$_ws_name" | cksum | awk '{print $1}')
-    echo "$(( ((_hash % 900) * 10) + 50000 ))"
-  else
-    echo "3000"
-  fi
+  derive_workspace_port "3000"
 }
 
 # CONDUCTOR_PORT takes precedence
@@ -51,11 +43,28 @@ assert_equal "default gets 3000" "3000" "$result"
 
 # No vars gets 3000
 unset CONDUCTOR_PORT SUPERSET_WORKSPACE_NAME
+WORKSPACE_NAME=""
+WORKSPACE_PROVIDER=""
 result=$(derive_port)
 assert_equal "no vars gets 3000" "3000" "$result"
 
+# Git worktrees derive an isolated port from their resolved name.
+WORKSPACE_NAME="workspace-abc123"
+WORKSPACE_PROVIDER="git"
+result=$(derive_port)
+assert_true "git worktree port >= 50000" [ "$result" -ge 50000 ]
+assert_true "git worktree port <= 58990" [ "$result" -le 58990 ]
+
+# Conductor without CONDUCTOR_PORT keeps its historical default behavior.
+WORKSPACE_NAME="conductor-feature"
+WORKSPACE_PROVIDER="conductor"
+result=$(derive_port)
+assert_equal "conductor without port keeps default" "3000" "$result"
+
 # Port is multiple of 10 (for 10-port block allocation)
 SUPERSET_WORKSPACE_NAME="test-port-alignment"
+WORKSPACE_NAME="test-port-alignment"
+WORKSPACE_PROVIDER="superset"
 result=$(derive_port)
 remainder=$((result % 10))
 assert_equal "port is multiple of 10" "0" "$remainder"

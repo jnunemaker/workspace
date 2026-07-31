@@ -5,6 +5,7 @@
 #   bootstrap  Initialize a workspace (symlinks, deps, DB)
 #   run        Start the dev server
 #   archive    Tear down a workspace (kill processes, drop DBs)
+#   prune      Clean resources for Git worktrees removed externally
 #   update     Pull latest from GitHub and reinstall
 #   version    Print the current version
 #
@@ -26,6 +27,7 @@ usage() {
   echo "  bootstrap  Initialize a workspace (symlinks, deps, DB)"
   echo "  run        Start the dev server"
   echo "  archive    Tear down a workspace (kill processes, drop DBs)"
+  echo "  prune      Clean resources for removed Git worktrees"
   echo "  update     Pull latest from GitHub and reinstall"
   echo "  version    Print the current version"
   echo ""
@@ -48,6 +50,10 @@ case "${1:-}" in
   archive)
     shift
     exec sh "$WORKSPACE_HOME/lib/archive.sh" "$@"
+    ;;
+  prune)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/prune.sh" "$@"
     ;;
   update)
     shift
