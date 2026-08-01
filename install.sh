@@ -69,7 +69,7 @@ fi
 
 sh "$WORKSPACE_HOME/lib/install_skill.sh"
 
-VERSION=$(cat "$WORKSPACE_HOME/VERSION" 2>/dev/null || echo "unknown")
+VERSION=$(git -C "$WORKSPACE_HOME" log -1 --format="%h (%cs)" 2>/dev/null || echo "unknown")
 echo ""
 echo "workspace $VERSION installed successfully!"
 echo ""
