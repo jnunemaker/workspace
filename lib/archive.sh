@@ -13,10 +13,21 @@ set -e
 WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
+. "$WORKSPACE_LIB/registry.sh"
 
-resolve_workspace
-sanitize_workspace_name
-prefer_workspace_file
+_archive_registry_entry=""
+if [ "${1:-}" = "--registry-entry" ]; then
+  _archive_registry_entry="$2"
+  load_registered_workspace "$_archive_registry_entry" || {
+    err "Invalid workspace registry entry"
+    exit 1
+  }
+  cd "$WORKSPACE_ROOT_PATH"
+else
+  resolve_workspace
+  sanitize_workspace_name
+  prefer_workspace_file
+fi
 
 # ── Default workspace: nothing to do ─────────────────────────────
 
@@ -25,18 +36,24 @@ if is_default_workspace; then
   exit 0
 fi
 
+# A manual Codex archive shares the registry lock with registration and prune.
+# Registry-entry archives are already called by prune while it owns this lock.
+if [ -z "$_archive_registry_entry" ] && [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  wait_for_workspace_registry_lock || {
+    err "Workspace lifecycle is busy — try archive again"
+    exit 1
+  }
+  trap 'release_workspace_registry_lock' EXIT HUP INT TERM
+fi
+
 header "Archiving workspace: $WORKSPACE_NAME"
 
 # ── Port derivation (same logic as run) ──────────────────────────
 
-_ws_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
-if [ -n "$CONDUCTOR_PORT" ]; then
-  BASE_PORT=$CONDUCTOR_PORT
-elif [ -n "$_ws_name" ] && [ "$_ws_name" != "default" ]; then
-  _hash=$(printf '%s' "$_ws_name" | cksum | awk '{print $1}')
-  BASE_PORT=$(( ((_hash % 900) * 10) + 50000 ))
+if [ -n "${WORKSPACE_REGISTERED_PORT:-}" ]; then
+  BASE_PORT="$WORKSPACE_REGISTERED_PORT"
 else
-  BASE_PORT=""
+  BASE_PORT=$(derive_workspace_port "")
 fi
 
 # ── Run archive hook (before DB drop — hook may need Rails) ──────
@@ -68,6 +85,16 @@ fi
 
 # ── Drop workspace databases ────────────────────────────────────
 
-drop_workspace_databases
+if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  drop_workspace_databases_strict
+  if [ -n "$_archive_registry_entry" ]; then
+    unregister_workspace "$_archive_registry_entry"
+  else
+    unregister_workspace
+  fi
+else
+  drop_workspace_databases
+  unregister_workspace
+fi
 
 printf "\n${_green}  ✓${_reset} ${_bold}Archive complete${_reset}\n"

@@ -33,6 +33,15 @@ assert_true ".superset/config.json created" [ -f .superset/config.json ]
 assert_true "superset config has setup script" grep -q 'workspace bootstrap' .superset/config.json
 assert_true "superset config has teardown script" grep -q 'workspace archive' .superset/config.json
 
+# ── Codex local environment and lifecycle hook ────────────────────────
+
+assert_true "codex environment created" [ -f .codex/environments/environment.toml ]
+assert_true "codex environment runs bootstrap" grep -q 'script = "workspace bootstrap"' .codex/environments/environment.toml
+assert_true "codex environment has run action" grep -q 'command = "workspace run"' .codex/environments/environment.toml
+assert_true "codex hooks created" [ -f .codex/hooks.json ]
+assert_true "codex hooks schedule prune" grep -q 'workspace prune --deferred' .codex/hooks.json
+assert_true "codex hooks contain valid JSON" ruby -rjson -e 'JSON.parse(File.read(".codex/hooks.json"))'
+
 # ── init: creates bin/workspace-seed ────────────────────────────
 
 assert_true "bin/workspace-seed created" [ -f bin/workspace-seed ]
@@ -178,6 +187,7 @@ setup = "bin/custom-setup"
 EOF
 
 mkdir -p .superconductor
+mkdir -p .codex/environments
 cat > .superconductor/config.json <<'EOF'
 {
   "setup": ["bin/custom-setup"]
@@ -189,12 +199,26 @@ cat > .superset/config.json <<'EOF'
   "setup": ["bin/custom-setup"]
 }
 EOF
+cat > .codex/environments/environment.toml <<'EOF'
+version = 1
+name = "custom-codex"
+
+[setup]
+script = "bin/custom-setup"
+EOF
+mkdir -p .codex
+cat > .codex/hooks.json <<'EOF'
+{"hooks":{"SessionEnd":[]}}
+EOF
 
 run_init
 
 assert_true "settings.toml not overwritten" grep -q 'custom-setup' .conductor/settings.toml
 assert_true "superconductor config not overwritten" grep -q 'custom-setup' .superconductor/config.json
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
+assert_true "codex environment not overwritten" grep -q 'custom-codex' .codex/environments/environment.toml
+assert_false "codex environment default not appended" grep -q 'workspace bootstrap' .codex/environments/environment.toml
+assert_false "codex hooks not overwritten" grep -q 'workspace prune' .codex/hooks.json
 
 # ── init: adds .workspace to .gitignore ─────────────────────────
 

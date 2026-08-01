@@ -6,6 +6,9 @@ cd "$(dirname "$0")"
 
 # Clear any env vars from the host environment
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
+unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CODEX_HOME 2>/dev/null || true
+
+assert_false "empty Git path is not canonicalized to cwd" canonical_git_path ""
 
 # ── resolve_workspace ────────────────────────────────────────────
 
@@ -49,6 +52,74 @@ unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH 
 resolve_workspace
 assert_equal "no vars → empty name" "" "$WORKSPACE_NAME"
 assert_equal "no vars → empty root" "" "$WORKSPACE_ROOT_PATH"
+
+# Linked Git worktrees are detected when provider variables are absent.
+git_root="$TEST_TMP/git-root"
+CODEX_HOME="$TEST_TMP/codex"
+git_worktree="$CODEX_HOME/worktrees/git-worktree"
+mkdir -p "$git_root" "$CODEX_HOME/worktrees"
+git -C "$git_root" init -q
+git -C "$git_root" config user.email "workspace-tests@example.com"
+git -C "$git_root" config user.name "Workspace Tests"
+printf 'root\n' > "$git_root/README.md"
+git -C "$git_root" add README.md
+git -C "$git_root" commit -qm "initial"
+git -C "$git_root" worktree add -q --detach "$git_worktree"
+git_root=$(cd "$git_root" && pwd -P)
+git_worktree=$(cd "$git_worktree" && pwd -P)
+
+cd "$git_worktree"
+resolve_workspace
+assert_equal "git worktree root detected" "$git_root" "$WORKSPACE_ROOT_PATH"
+assert_true "git worktree gets a name" [ -n "$WORKSPACE_NAME" ]
+assert_equal "git worktree provider detected" "git" "$WORKSPACE_PROVIDER"
+assert_equal "git common dir recorded" "$git_root/.git" "$WORKSPACE_GIT_COMMON_DIR"
+
+# Repositories whose Git directory lives outside the checkout still resolve
+# their root from Git's worktree inventory.
+separate_root="$TEST_TMP/separate-root"
+separate_git="$TEST_TMP/separate-git"
+separate_worktree="$CODEX_HOME/worktrees/separate-worktree"
+git init -q --separate-git-dir="$separate_git" "$separate_root"
+git -C "$separate_root" config core.worktree "$separate_root"
+git -C "$separate_root" config user.email "workspace-tests@example.com"
+git -C "$separate_root" config user.name "Workspace Tests"
+printf 'root\n' > "$separate_root/README.md"
+git -C "$separate_root" add README.md
+git -C "$separate_root" commit -qm "initial"
+git -C "$separate_root" worktree add -q --detach "$separate_worktree"
+separate_root=$(cd "$separate_root" && pwd -P)
+cd "$separate_worktree"
+resolve_workspace
+assert_equal "separate Git directory root detected" "$separate_root" "$WORKSPACE_ROOT_PATH"
+assert_equal "separate Git directory worktree detected" "git" "$WORKSPACE_PROVIDER"
+
+git -C "$git_worktree" switch -q -c codex-attached
+resolve_workspace
+assert_equal "branch-attached Codex worktree stays detected" "git" "$WORKSPACE_PROVIDER"
+
+# Branch-backed worktrees outside Codex retain their historical default state.
+manual_worktree="$TEST_TMP/manual-worktree"
+git -C "$git_root" worktree add -q -b manual-test "$manual_worktree"
+cd "$manual_worktree"
+resolve_workspace
+assert_equal "manual git worktree stays default" "" "$WORKSPACE_NAME"
+assert_equal "manual git worktree has no provider" "" "$WORKSPACE_PROVIDER"
+
+# Existing provider variables retain priority even inside a Git worktree.
+cd "$git_worktree"
+SUPERSET_ROOT_PATH="/superset/root"
+SUPERSET_WORKSPACE_NAME="superset-ws"
+resolve_workspace
+assert_equal "superset root still wins in git worktree" "/superset/root" "$WORKSPACE_ROOT_PATH"
+assert_equal "superset name still wins in git worktree" "superset-ws" "$WORKSPACE_NAME"
+assert_equal "superset provider retained" "superset" "$WORKSPACE_PROVIDER"
+
+unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME
+cd "$git_root"
+resolve_workspace
+assert_equal "main git checkout stays default" "" "$WORKSPACE_NAME"
+assert_equal "main git checkout has no provider" "" "$WORKSPACE_PROVIDER"
 
 # ── is_default_workspace ─────────────────────────────────────────
 

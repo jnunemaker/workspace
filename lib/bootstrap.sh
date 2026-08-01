@@ -18,11 +18,29 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/detect.sh"
 . "$WORKSPACE_LIB/db.sh"
+. "$WORKSPACE_LIB/registry.sh"
 
 resolve_workspace
 sanitize_workspace_name
 detect_app_name
 detect_setup_script
+
+# Reconcile resources from any Codex-managed worktrees removed since the last
+# lifecycle event, without adding work for existing providers or empty repos.
+if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
+  [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
+  sh "$WORKSPACE_LIB/prune.sh" --quiet
+fi
+
+# Serialize the complete Codex setup with teardown for the same shared Git
+# repository. Registration recognizes this process as the existing owner.
+if [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  wait_for_workspace_registry_lock || {
+    err "Workspace lifecycle is busy — run bootstrap again"
+    exit 1
+  }
+  trap 'release_workspace_registry_lock' EXIT HUP INT TERM
+fi
 
 header "Setting up workspace"
 if ! is_default_workspace; then
@@ -149,6 +167,8 @@ create_workspace_databases
 
 printf '%s' "$WORKSPACE_NAME" > .workspace
 ok "Wrote .workspace file"
+
+register_workspace "$(derive_workspace_port "")"
 
 # ── Run bootstrap hook ───────────────────────────────────────────
 

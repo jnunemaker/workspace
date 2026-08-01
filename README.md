@@ -16,10 +16,11 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
 | Command     | What it does                                                    |
 | ----------- | --------------------------------------------------------------- |
-| `init`      | Set up a project for workspace support (database.yml, superconductor, conductor, superset configs) |
+| `init`      | Set up a project for workspace support (database.yml and lifecycle configs) |
 | `bootstrap` | Set up a workspace — symlink shared files, run app setup, create isolated DBs |
 | `run`       | Start the dev server for this workspace                         |
 | `archive`   | Tear down a workspace — kill processes, drop DBs                |
+| `prune`     | Clean resources for Git worktrees removed by an external tool    |
 | `update`    | Pull the latest CLI from GitHub                                 |
 | `version`   | Print the current version                                       |
 
@@ -35,6 +36,39 @@ Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next
 6. Run `bin/workspace-bootstrap-hook` if present.
 
 The root/default workspace is left alone — only siblings get isolated.
+
+## Codex worktrees
+
+When those files do not already exist, `workspace init` creates
+`.codex/environments/environment.toml` with:
+
+- A setup script that runs `workspace bootstrap` whenever Codex creates a worktree.
+- A **Run** action that runs `workspace run`.
+- An **Archive workspace** action for explicit manual teardown.
+
+It also creates a project-local `SessionEnd` hook in `.codex/hooks.json`. Existing
+Codex environment and hook files are left unchanged. Codex
+does not distinguish an archived chat from an ordinary app close or idle
+session in that hook, so the hook never archives the current workspace
+directly. Instead, it schedules `workspace prune`, which waits for Git to
+confirm that Codex removed the worktree before killing its ports and dropping
+its databases.
+
+After committing the generated `.codex` files, select the local environment in
+Codex when starting a worktree chat. Review and trust the project hook when
+Codex prompts; untrusted command hooks are skipped.
+
+Codex-managed worktrees do not provide the Conductor-style root/name variables.
+`workspace` recognizes linked worktrees under `$CODEX_HOME/worktrees` (default
+`~/.codex/worktrees`) and reads their identity through Git's shared metadata,
+including after a branch is attached. Worktrees created elsewhere retain their
+existing behavior. Superconductor, Superset, and Conductor variables always
+take precedence.
+
+Cleanup registrations live under the repository's shared Git directory at
+`.git/workspace/registry/`, so they survive deletion of the disposable
+worktree. Cleanup is also reconciled on the next `workspace bootstrap` or
+`workspace run` in case Codex was closed before its deferred hook completed.
 
 ## Hooks
 
