@@ -15,6 +15,7 @@ set -e
 WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/detect.sh"
+. "$WORKSPACE_LIB/registry.sh"
 
 resolve_workspace
 sanitize_workspace_name
@@ -37,6 +38,15 @@ detect_foreman
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
   sh "$WORKSPACE_LIB/prune.sh" --quiet
+fi
+
+# A Codex run may be invoked before setup completes. Publish a collision-free
+# port reservation before sweeping or starting any processes.
+if [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  register_workspace "$(derive_workspace_port "3000")" || {
+    err "Could not reserve workspace ports"
+    exit 1
+  }
 fi
 
 # ── Port derivation ──────────────────────────────────────────────

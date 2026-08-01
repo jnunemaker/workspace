@@ -129,6 +129,11 @@ drop_workspace_databases_strict() {
     return 0
   fi
 
+  if [ ! -x bin/rails ] || [ ! -f config/database.yml ]; then
+    step "No Rails database configuration — skipping database cleanup"
+    return 0
+  fi
+
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
   _drop_failed=0
 

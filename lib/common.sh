@@ -50,6 +50,7 @@ resolve_workspace() {
 # --path-format flag.
 canonical_git_path() {
   _git_path="$1"
+  [ -n "$_git_path" ] || return 1
   case "$_git_path" in
     /*) ;;
     *) _git_path="$(pwd)/$_git_path" ;;
@@ -79,9 +80,19 @@ detect_git_workspace() {
   [ -n "$_git_dir" ] && [ -n "$_git_common_dir" ] || return 0
 
   WORKSPACE_GIT_COMMON_DIR="$_git_common_dir"
-  if [ "$(basename "$_git_common_dir")" = ".git" ]; then
-    WORKSPACE_GIT_ROOT_PATH=$(dirname "$_git_common_dir")
+  _git_root_path=$(git config --path --get core.worktree 2>/dev/null || true)
+  if [ -n "$_git_root_path" ]; then
+    case "$_git_root_path" in
+      /*) ;;
+      *) _git_root_path="$_git_common_dir/$_git_root_path" ;;
+    esac
+  else
+    _git_root_path=$(git worktree list --porcelain 2>/dev/null \
+      | sed -n 's/^worktree //p' \
+      | head -1)
   fi
+  WORKSPACE_GIT_ROOT_PATH=$(canonical_git_path "$_git_root_path")
+  [ -n "$WORKSPACE_GIT_ROOT_PATH" ] || return 0
 
   [ "$_git_dir" != "$_git_common_dir" ] || return 0
   case "$_git_dir" in
@@ -136,20 +147,20 @@ derive_workspace_port() {
   _default_port="$1"
   _port_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
   if [ -z "$_port_name" ] && [ "$WORKSPACE_PROVIDER" = "git" ]; then
-    _registered_port_file="$WORKSPACE_GIT_COMMON_DIR/workspace/registry/$WORKSPACE_NAME.record"
-    if [ -f "$_registered_port_file" ]; then
-      _registered_port=$(sed -n '4p' "$_registered_port_file")
-      case "$_registered_port" in
-        ""|*[!0-9]*) ;;
-        *) printf '%s\n' "$_registered_port"; return ;;
-      esac
+    if command -v registered_workspace_port >/dev/null 2>&1; then
+      _registered_port=$(registered_workspace_port 2>/dev/null || true)
+      if [ -n "$_registered_port" ]; then
+        printf '%s\n' "$_registered_port"
+        return
+      fi
     fi
     _port_name="$WORKSPACE_NAME"
   fi
 
   if [ -n "${CONDUCTOR_PORT:-}" ]; then
     printf '%s\n' "$CONDUCTOR_PORT"
-  elif [ -n "$_port_name" ] && [ "$_port_name" != "default" ]; then
+  elif [ -n "$_port_name" ] && \
+    { [ "$_port_name" != "default" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; }; then
     _port_hash=$(printf '%s' "$_port_name" | cksum | awk '{print $1}')
     printf '%s\n' "$(( ((_port_hash % 900) * 10) + 50000 ))"
   else

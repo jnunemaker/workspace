@@ -12,6 +12,7 @@ git_root="$TEST_TMP/registry-root"
 CODEX_HOME="$TEST_TMP/codex"
 git_worktree="$CODEX_HOME/worktrees/registry-worktree"
 mkdir -p "$git_root/bin" "$git_root/config" "$CODEX_HOME/worktrees"
+printf 'development:\n  database: app_development\n' > "$git_root/config/database.yml"
 git -C "$git_root" init -q
 git -C "$git_root" config user.email "workspace-tests@example.com"
 git -C "$git_root" config user.name "Workspace Tests"
@@ -34,7 +35,10 @@ assert_equal "registered name recorded" "$registered_name" "$(sed -n '1p' "$regi
 assert_equal "registered root recorded" "$git_root" "$(sed -n '2p' "$registry_entry")"
 assert_equal "registered worktree path recorded" "$git_worktree" "$(sed -n '3p' "$registry_entry")"
 assert_equal "registered port recorded" "51230" "$(sed -n '4p' "$registry_entry")"
+assert_equal "registered port accessor decodes record" "51230" "$(registered_workspace_port)"
 assert_equal "git port derivation reuses registration" "51230" "$(derive_workspace_port 3000)"
+load_registered_workspace "$registry_entry"
+assert_equal "registered path accessor decodes record" "$git_worktree" "$WORKSPACE_REGISTERED_PATH"
 
 WORKSPACE_NAME="second-worktree"
 register_workspace "51230"
@@ -59,10 +63,54 @@ sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
 assert_true "orphaned claim is restored and preserved" [ -f "$registry_entry" ]
 assert_false "orphaned claim is removed" [ -f "$orphaned_claim" ]
 
+# `workspace run` must publish a reservation even when bootstrap has not done
+# so yet, before it sweeps any ports.
+rm "$registry_entry"
+run_fake_bin="$TEST_TMP/run-bin"
+run_log="$TEST_TMP/run.log"
+mkdir -p "$run_fake_bin" "$git_worktree/bin"
+cat > "$run_fake_bin/lsof" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$run_fake_bin/lsof"
+cat > "$git_worktree/bin/foreman" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$PORT" > "$WORKSPACE_TEST_RUN_LOG"
+EOF
+chmod +x "$git_worktree/bin/foreman"
+cd "$git_worktree"
+PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" CONDUCTOR_PORT=51230 WORKSPACE_TEST_RUN_LOG="$run_log" sh "$WORKSPACE_HOME/lib/run.sh"
+assert_true "run registers an unbootstrapped Git worktree" [ -f "$registry_entry" ]
+assert_equal "run uses its registered port" "$(sed -n '4p' "$registry_entry")" "$(cat "$run_log")"
+
+# Manual Git archive keeps the record when Rails reports a database failure,
+# allowing prune or a later archive to retry.
+mkdir -p config
+printf 'development:\n  database: app_development\n' > config/database.yml
+cat > bin/rails <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x bin/rails
+assert_false "manual archive reports database failures" env PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" sh "$WORKSPACE_HOME/lib/archive.sh"
+assert_true "manual archive failure preserves registry" [ -f "$registry_entry" ]
+cd "$git_root"
+
+# Lock files created by older workspace versions are recovered after their
+# owner exits, preserving upgrade compatibility.
+mkdir "$git_root/.git/workspace/prune.lock"
+printf '%s\n' "99999999" > "$git_root/.git/workspace/prune.lock/pid"
+WORKSPACE_REGISTRY_LOCK_ATTEMPTS=1
+export WORKSPACE_REGISTRY_LOCK_ATTEMPTS
+assert_true "dead legacy lock is upgraded" wait_for_workspace_registry_lock
+assert_true "upgraded lock publishes owner atomically" [ "$(readlink "$git_root/.git/workspace/prune.lock")" = "$$" ]
+release_workspace_registry_lock
+unset WORKSPACE_REGISTRY_LOCK_ATTEMPTS
+
 sleep 30 &
 other_lock_owner=$!
-mkdir "$git_root/.git/workspace/prune.lock"
-printf '%s\n' "$other_lock_owner" > "$git_root/.git/workspace/prune.lock/pid"
+ln -s "$other_lock_owner" "$git_root/.git/workspace/prune.lock"
 WORKSPACE_REGISTRY_LOCK_ATTEMPTS=1
 export WORKSPACE_REGISTRY_LOCK_ATTEMPTS
 assert_false "registration cannot publish while prune owns lock" register_workspace "59990"
@@ -70,8 +118,7 @@ unset WORKSPACE_REGISTRY_LOCK_ATTEMPTS
 assert_equal "blocked registration leaves record unchanged" "51230" "$(sed -n '4p' "$registry_entry")"
 kill "$other_lock_owner"
 wait "$other_lock_owner" 2>/dev/null || true
-rm "$git_root/.git/workspace/prune.lock/pid"
-rmdir "$git_root/.git/workspace/prune.lock"
+rm "$git_root/.git/workspace/prune.lock"
 
 # Removing the Git worktree makes the registry entry stale. Prune must clean
 # the isolated databases from the surviving root checkout, then unregister it.
@@ -100,12 +147,10 @@ printf '%s:%s\n' "$(pwd -P)" "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_ARCHIVE_
 EOF
 chmod +x bin/workspace-archive-hook
 
-mkdir "$git_root/.git/workspace/prune.lock"
-printf '%s\n' "$$" > "$git_root/.git/workspace/prune.lock/pid"
+ln -s "$$" "$git_root/.git/workspace/prune.lock"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"
 assert_true "overlapping prune leaves registry to lock owner" [ -f "$registry_entry" ]
-rm "$git_root/.git/workspace/prune.lock/pid"
-rmdir "$git_root/.git/workspace/prune.lock"
+rm "$git_root/.git/workspace/prune.lock"
 
 # A failed authoritative Git query must leave the record untouched.
 fake_git_bin="$TEST_TMP/git-bin"
@@ -121,12 +166,11 @@ chmod +x "$fake_git_bin/git"
 WORKSPACE_TEST_REAL_GIT=$(command -v git) PATH="$fake_git_bin:$PATH" sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
 assert_true "Git query failure preserves registry" [ -f "$registry_entry" ]
 
-mkdir "$git_root/.git/workspace/prune.lock"
-printf '%s\n' "99999999" > "$git_root/.git/workspace/prune.lock/pid"
+ln -s "99999999" "$git_root/.git/workspace/prune.lock"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_DB_DROP_FAIL=1 WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"
 
 assert_true "failed database cleanup preserves registry" [ -f "$registry_entry" ]
-assert_false "stale prune lock recovered" [ -d "$git_root/.git/workspace/prune.lock" ]
+assert_false "stale prune lock recovered" [ -L "$git_root/.git/workspace/prune.lock" ]
 
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"
 

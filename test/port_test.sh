@@ -55,6 +55,14 @@ result=$(derive_port)
 assert_true "git worktree port >= 50000" [ "$result" -ge 50000 ]
 assert_true "git worktree port <= 58990" [ "$result" -le 58990 ]
 
+# A Git worktree may legitimately sanitize to "default"; it must still be
+# isolated from the main checkout's historical port 3000.
+WORKSPACE_NAME="default"
+WORKSPACE_PROVIDER="git"
+result=$(derive_port)
+assert_true "git worktree named default gets isolated port" [ "$result" -ge 50000 ]
+assert_true "git worktree named default avoids port 3000" [ "$result" -ne 3000 ]
+
 # Conductor without CONDUCTOR_PORT keeps its historical default behavior.
 WORKSPACE_NAME="conductor-feature"
 WORKSPACE_PROVIDER="conductor"

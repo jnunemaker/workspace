@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
 unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CODEX_HOME 2>/dev/null || true
 
+assert_false "empty Git path is not canonicalized to cwd" canonical_git_path ""
+
 # ── resolve_workspace ────────────────────────────────────────────
 
 # Prefers SUPERCONDUCTOR vars over SUPERSET and CONDUCTOR vars
@@ -72,6 +74,25 @@ assert_equal "git worktree root detected" "$git_root" "$WORKSPACE_ROOT_PATH"
 assert_true "git worktree gets a name" [ -n "$WORKSPACE_NAME" ]
 assert_equal "git worktree provider detected" "git" "$WORKSPACE_PROVIDER"
 assert_equal "git common dir recorded" "$git_root/.git" "$WORKSPACE_GIT_COMMON_DIR"
+
+# Repositories whose Git directory lives outside the checkout still resolve
+# their root from Git's worktree inventory.
+separate_root="$TEST_TMP/separate-root"
+separate_git="$TEST_TMP/separate-git"
+separate_worktree="$CODEX_HOME/worktrees/separate-worktree"
+git init -q --separate-git-dir="$separate_git" "$separate_root"
+git -C "$separate_root" config core.worktree "$separate_root"
+git -C "$separate_root" config user.email "workspace-tests@example.com"
+git -C "$separate_root" config user.name "Workspace Tests"
+printf 'root\n' > "$separate_root/README.md"
+git -C "$separate_root" add README.md
+git -C "$separate_root" commit -qm "initial"
+git -C "$separate_root" worktree add -q --detach "$separate_worktree"
+separate_root=$(cd "$separate_root" && pwd -P)
+cd "$separate_worktree"
+resolve_workspace
+assert_equal "separate Git directory root detected" "$separate_root" "$WORKSPACE_ROOT_PATH"
+assert_equal "separate Git directory worktree detected" "git" "$WORKSPACE_PROVIDER"
 
 git -C "$git_worktree" switch -q -c codex-attached
 resolve_workspace

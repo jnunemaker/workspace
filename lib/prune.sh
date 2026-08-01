@@ -65,7 +65,7 @@ for _registry_entry in "$_registry_root"/*.record; do
     continue
   fi
 
-  _registered_path=$(sed -n '3p' "$_claimed_entry")
+  _registered_path="$WORKSPACE_REGISTERED_PATH"
 
   if [ -d "$_registered_path" ]; then
     if printf '%s\n' "$_live_worktrees" | grep -Fqx "worktree $_registered_path"; then

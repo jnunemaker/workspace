@@ -84,9 +84,13 @@ fi
 
 # ── Drop workspace databases ────────────────────────────────────
 
-if [ -n "$_archive_registry_entry" ]; then
+if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
   drop_workspace_databases_strict
-  unregister_workspace "$_archive_registry_entry"
+  if [ -n "$_archive_registry_entry" ]; then
+    unregister_workspace "$_archive_registry_entry"
+  else
+    unregister_workspace
+  fi
 else
   drop_workspace_databases
   unregister_workspace

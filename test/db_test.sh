@@ -178,4 +178,23 @@ create_workspace_databases 2>/dev/null
 
 assert_false "non-executable seed is skipped" [ -f .seed-ran ]
 
+# ── drop_workspace_databases_strict ─────────────────────────────
+
+non_rails_dir="$TEST_TMP/non-rails"
+mkdir -p "$non_rails_dir"
+cd "$non_rails_dir"
+WORKSPACE_NAME="non-rails-ws"
+assert_true "strict cleanup is a no-op for non-Rails projects" drop_workspace_databases_strict
+
+app_dir=$(create_fake_app "strict-drop-failure")
+cd "$app_dir"
+printf 'development:\n  database: app_development\n' > config/database.yml
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 1
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="strict-failure-ws"
+assert_false "strict cleanup reports Rails drop failures" drop_workspace_databases_strict
+
 report "db.sh"
