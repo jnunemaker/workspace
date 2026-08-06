@@ -29,6 +29,11 @@ else
   prefer_workspace_file
 fi
 
+if [ -n "${WORKSPACE_INVALID_NAME:-}" ] || [ "$WORKSPACE_NAME" = "default" ]; then
+  err "Workspace name cannot produce a safe isolated database suffix"
+  exit 1
+fi
+
 # ── Default workspace: nothing to do ─────────────────────────────
 
 if is_default_workspace; then

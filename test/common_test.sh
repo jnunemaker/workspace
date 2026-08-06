@@ -6,7 +6,9 @@ cd "$(dirname "$0")"
 
 # Clear any env vars from the host environment
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
-unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CODEX_HOME 2>/dev/null || true
+unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
+CODEX_HOME="$TEST_TMP/no-codex-home"
+export CODEX_HOME
 
 assert_false "empty Git path is not canonicalized to cwd" canonical_git_path ""
 
@@ -22,6 +24,7 @@ CONDUCTOR_WORKSPACE_NAME="conductor-ws"
 resolve_workspace
 assert_equal "prefers SUPERCONDUCTOR_ROOT_PATH" "/superconductor/root" "$WORKSPACE_ROOT_PATH"
 assert_equal "prefers SUPERCONDUCTOR_WORKSPACE_NAME" "superconductor-ws" "$WORKSPACE_NAME"
+assert_equal "superconductor provider retained" "superconductor" "$WORKSPACE_PROVIDER"
 
 # Prefers SUPERSET vars over CONDUCTOR vars
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME
@@ -32,6 +35,7 @@ CONDUCTOR_WORKSPACE_NAME="conductor-ws"
 resolve_workspace
 assert_equal "prefers SUPERSET_ROOT_PATH" "/superset/root" "$WORKSPACE_ROOT_PATH"
 assert_equal "prefers SUPERSET_WORKSPACE_NAME" "superset-ws" "$WORKSPACE_NAME"
+assert_equal "superset provider retained" "superset" "$WORKSPACE_PROVIDER"
 
 # Falls back to CONDUCTOR vars when SUPERSET and SUPERCONDUCTOR not set
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME
@@ -40,6 +44,7 @@ CONDUCTOR_WORKSPACE_NAME="conductor-ws"
 resolve_workspace
 assert_equal "falls back to CONDUCTOR_ROOT_PATH" "/conductor/root" "$WORKSPACE_ROOT_PATH"
 assert_equal "falls back to CONDUCTOR_WORKSPACE_NAME" "conductor-ws" "$WORKSPACE_NAME"
+assert_equal "conductor provider retained" "conductor" "$WORKSPACE_PROVIDER"
 
 # "default" workspace is treated as no workspace
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH
@@ -220,6 +225,15 @@ WORKSPACE_NAME=""
 prefer_workspace_file >"$TEST_TMP/out" 2>&1
 assert_equal "file used when env empty" "atlanta" "$WORKSPACE_NAME"
 assert_false "no warning when env empty" [ -s "$TEST_TMP/out" ]
+
+# A valid authoritative file clears a stale invalid provider-derived identity.
+mkdir -p "$TEST_TMP/invalid-env-valid-file" && cd "$TEST_TMP/invalid-env-valid-file"
+printf '%s' "atlanta" > .workspace
+WORKSPACE_NAME=""
+WORKSPACE_INVALID_NAME=1
+prefer_workspace_file
+assert_equal "valid file replaces invalid provider identity" "atlanta" "$WORKSPACE_NAME"
+assert_equal "valid file clears invalid-name state" "" "$WORKSPACE_INVALID_NAME"
 
 cd "$TEST_DIR"
 

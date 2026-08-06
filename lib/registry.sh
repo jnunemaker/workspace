@@ -10,7 +10,7 @@ workspace_registry_root() {
 workspace_registry_entry() {
   _registry_root=$(workspace_registry_root) || return 1
   case "$WORKSPACE_NAME" in
-    ""|*[!a-zA-Z0-9_-]*) return 1 ;;
+    ""|default|*[!a-zA-Z0-9_-]*) return 1 ;;
   esac
   printf '%s/%s.record\n' "$_registry_root" "$WORKSPACE_NAME"
 }
@@ -185,7 +185,7 @@ load_registered_workspace() {
   WORKSPACE_GIT_COMMON_DIR=$(dirname "$(dirname "$(dirname "$_loaded_registry_entry")")")
 
   case "$WORKSPACE_NAME" in
-    ""|*[!a-zA-Z0-9_-]*) return 1 ;;
+    ""|default|*[!a-zA-Z0-9_-]*) return 1 ;;
   esac
   [ -d "$WORKSPACE_ROOT_PATH" ] || return 1
   [ -n "$WORKSPACE_REGISTERED_PATH" ] || return 1

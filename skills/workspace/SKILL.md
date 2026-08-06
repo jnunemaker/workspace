@@ -1,6 +1,6 @@
 ---
 name: workspace
-description: Manage isolated app workspaces with the workspace CLI. Use when the user wants to set up, run, or tear down a sibling checkout of a project (different branch, isolated database, separate ports), customize the workspace lifecycle (seed, bootstrap, run, archive hooks), or onboard a project to workspace support. Triggers include "bootstrap", "archive workspace", "set up a new workspace", "workspace init", a `.workspace` file in the repo, or working in a Conductor / Superset / Superconductor environment.
+description: Manage isolated app workspaces with the workspace CLI. Use when the user wants to set up, run, or tear down a sibling checkout of a project (different branch, isolated database, separate ports), customize the workspace lifecycle (database, seed, bootstrap, run, archive hooks), or onboard a project to workspace support. Triggers include "bootstrap", "archive workspace", "set up a new workspace", "workspace init", a `.workspace` file in the repo, or working in a Conductor / Superset / Superconductor environment.
 ---
 
 # workspace
@@ -27,8 +27,8 @@ Strong signals you're in workspace territory: a `.workspace` file in the repo, a
 | Command | When to run | What it does |
 | --- | --- | --- |
 | `workspace init` | Once per project, in the root checkout | Patches `config/database.yml` for suffix-based isolation, creates `.conductor/settings.toml`, `.superconductor/config.json`, `.superset/config.json`, scaffolds `bin/workspace-seed`, adds `.workspace` to `.gitignore`. Idempotent. |
-| `workspace bootstrap` | In each sibling checkout, after cloning or `git worktree add` | Symlinks shared files from root, runs the project's setup script (`bin/setup`, `script/setup`, etc.), patches `database.yml`, creates suffixed DBs, writes `.workspace`, runs `bin/workspace-seed` then `bin/workspace-bootstrap-hook`. In the root checkout, just runs setup with no isolation. |
-| `workspace run` | To start the dev server in a sibling | Sources `bin/workspace-run-hook` (so it can `export` env vars), exports `WORKSPACE_DB_SUFFIX`, starts foreman. |
+| `workspace bootstrap` | In each sibling checkout, after cloning or `git worktree add` | Symlinks shared files, optionally materializes and patches `database.yml` before project setup, patches setup-generated config afterward, runs `db:prepare`, writes `.workspace`, and runs seed/bootstrap hooks. In the root checkout, just runs setup with no isolation. |
+| `workspace run` | To start the dev server in a sibling | Loads linked `.env` defaults, exports ports and `WORKSPACE_DB_SUFFIX`, sources `bin/workspace-run-hook`, displays its optional `WORKSPACE_APP_URL`, then starts foreman. |
 | `workspace archive` | When you're done with a sibling workspace | Runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, drops the suffixed DBs. |
 | `workspace update` | To pull the latest CLI | `git pull` in `~/.workspace` (or re-runs the installer). |
 | `workspace version` | — | Prints the current version. |
@@ -39,9 +39,10 @@ The project customizes the lifecycle by dropping executable scripts into its own
 
 | Hook | When it runs | How |
 | --- | --- | --- |
-| `bin/workspace-seed` | After DB schema load during bootstrap | Executed |
-| `bin/workspace-bootstrap-hook` | After DB creation, seeding, and `.workspace` file write | Executed |
-| `bin/workspace-run-hook` | Before foreman starts (after ports + `WORKSPACE_DB_SUFFIX` are exported) | **Sourced** — can `export` env vars that affect the server |
+| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; materialize local `database.yml` here when needed | Executed |
+| `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
+| `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file write | Executed |
+| `bin/workspace-run-hook` | Before foreman starts (after dotenv, ports, and `WORKSPACE_DB_SUFFIX`) | **Sourced** — can export server variables and set `WORKSPACE_APP_URL` for display |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
 
 A hook that isn't executable (`chmod +x`) won't run.
@@ -89,10 +90,10 @@ cd .. && rm -rf myapp-feature-x
 - Symlinks are created with `ln -sfn`; if a real directory exists where a symlink should be (e.g. a real `.bundle/`), bootstrap deletes it first. Don't keep workspace-specific data in those paths.
 - `.env` is *symlinked*, not copied. Edits in any sibling affect the shared file.
 - The `database.yml` patch matches a specific shape. Hand-edited unusual `database.yml` files may not patch cleanly — check the diff after `init`.
-- `workspace-run-hook` is **sourced**, the others are **executed**. Use `export` in run-hook; use plain commands elsewhere.
+- `workspace-run-hook` is **sourced**, the others are **executed**. Use `export` in run-hook; use plain commands elsewhere. Set `WORKSPACE_APP_URL` there when the generic localhost URL is inaccurate.
 
 ## Reference
 
 - Source: <https://github.com/jnunemaker/workspace>
 - Local install: `~/.workspace` (CLI in `~/.workspace/bin/workspace`, lib scripts in `~/.workspace/lib/`)
-- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run)
+- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)

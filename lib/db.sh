@@ -75,25 +75,63 @@ patch_database_yml() {
   ok "database.yml patched"
 }
 
-# Create workspace-specific databases.
-create_workspace_databases() {
-  if is_default_workspace; then
+# Prepare workspace-specific databases.
+prepare_workspace_database() {
+  local _database_environment _database_tasks
+  _database_environment="$1"
+
+  if RAILS_ENV="$_database_environment" bin/rails db:prepare; then
+    return 0
+  fi
+
+  # Rails versions without db:prepare retain a data-preserving fallback. Only
+  # use it when the task inventory succeeds and confirms the task is absent;
+  # an actual db:prepare failure must still propagate.
+  if _database_tasks=$(RAILS_ENV="$_database_environment" bin/rails --tasks 2>/dev/null) && \
+    ! printf '%s\n' "$_database_tasks" | grep -q 'db:prepare'; then
+    RAILS_ENV="$_database_environment" bin/rails db:create && \
+      RAILS_ENV="$_database_environment" bin/rails db:migrate
     return
   fi
 
+  return 1
+}
+
+create_workspace_databases() {
+  if is_default_workspace; then
+    return 0
+  fi
+  if [ "$WORKSPACE_NAME" = "default" ]; then
+    err "Refusing to prepare databases with the reserved workspace name 'default'"
+    return 1
+  fi
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
-  header "Creating workspace databases"
+  if [ -x bin/rails ]; then
+    header "Preparing workspace databases"
 
-  step "Dev database"
-  RAILS_ENV=development bin/rails db:create 2>/dev/null || true
-  RAILS_ENV=development bin/rails db:schema:load 2>/dev/null || true
-  ok "Dev database ready"
+    _prepare_failed=0
 
-  step "Test database"
-  RAILS_ENV=test bin/rails db:create 2>/dev/null || true
-  RAILS_ENV=test bin/rails db:schema:load 2>/dev/null || true
-  ok "Test database ready"
+    step "Dev database"
+    if prepare_workspace_database development; then
+      ok "Dev database ready"
+    else
+      warn "Could not prepare dev database"
+      _prepare_failed=1
+    fi
+
+    step "Test database"
+    if prepare_workspace_database test; then
+      ok "Test database ready"
+    else
+      warn "Could not prepare test database"
+      _prepare_failed=1
+    fi
+
+    [ "$_prepare_failed" -eq 0 ] || return 1
+  else
+    step "No Rails executable — skipping database preparation"
+  fi
 
   # Seed
   if [ -x bin/workspace-seed ]; then
@@ -106,7 +144,11 @@ create_workspace_databases() {
 # Drop workspace-specific databases.
 drop_workspace_databases() {
   if is_default_workspace; then
-    return
+    return 0
+  fi
+  if [ "$WORKSPACE_NAME" = "default" ]; then
+    err "Refusing to drop databases with the reserved workspace name 'default'"
+    return 1
   fi
 
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
@@ -127,6 +169,10 @@ drop_workspace_databases() {
 drop_workspace_databases_strict() {
   if is_default_workspace; then
     return 0
+  fi
+  if [ "$WORKSPACE_NAME" = "default" ]; then
+    err "Refusing to drop databases with the reserved workspace name 'default'"
+    return 1
   fi
 
   if [ ! -x bin/rails ] || [ ! -f config/database.yml ]; then

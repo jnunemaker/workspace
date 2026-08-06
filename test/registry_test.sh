@@ -40,6 +40,15 @@ assert_equal "git port derivation reuses registration" "51230" "$(derive_workspa
 load_registered_workspace "$registry_entry"
 assert_equal "registered path accessor decodes record" "$git_worktree" "$WORKSPACE_REGISTERED_PATH"
 
+default_record="$git_root/.git/workspace/registry/default.record"
+printf 'default\n%s\n%s\n51290\n' "$git_root" "$git_worktree" > "$default_record"
+assert_false "registry rejects reserved default workspace identity" load_registered_workspace "$default_record"
+rm "$default_record"
+
+WORKSPACE_NAME="default"
+assert_false "registry entry path rejects reserved default identity" workspace_registry_entry
+WORKSPACE_NAME="$registered_name"
+
 WORKSPACE_NAME="second-worktree"
 register_workspace "51230"
 second_registry_entry="$git_root/.git/workspace/registry/second-worktree.record"

@@ -4,11 +4,12 @@
 # Flow:
 #   1. Resolve workspace name and root path
 #   2. Derive ports (CONDUCTOR_PORT, or hash of workspace name, or default)
-#   3. Export port env vars
-#   4. Export DB env vars
+#   3. Export port and DB env vars
+#   4. Load linked .env defaults without overriding exported manager values
 #   5. Sweep ports (kill stale processes)
-#   6. Run bin/workspace-run-hook if it exists
-#   7. Start server via foreman
+#   6. Source bin/workspace-run-hook if it exists
+#   7. Display the hook-provided application URL or the generic fallback
+#   8. Start server via foreman
 
 set -e
 
@@ -23,6 +24,11 @@ prefer_workspace_file
 detect_caddy
 detect_vite
 detect_foreman
+
+if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
+  err "Workspace name cannot produce a safe isolated database suffix"
+  exit 1
+fi
 
 # ── Help ─────────────────────────────────────────────────────────
 
@@ -83,6 +89,18 @@ fi
 
 if ! is_default_workspace; then
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+else
+  unset WORKSPACE_DB_SUFFIX
+fi
+
+# ── Dotenv defaults ──────────────────────────────────────────────
+
+# Foreman's env-file values override its parent environment. Load the linked
+# dotenv here instead, restoring values already exported by the manager; the
+# sourced run hook below can then deliberately override either set.
+load_dotenv_defaults ./.env
+if is_default_workspace; then
+  unset WORKSPACE_DB_SUFFIX
 fi
 
 # ── Sweep ports ──────────────────────────────────────────────────
@@ -111,7 +129,9 @@ fi
 # ── Start server ─────────────────────────────────────────────────
 
 header "Starting app"
-if [ "$USES_CADDY" = "true" ]; then
+if [ -n "${WORKSPACE_APP_URL:-}" ]; then
+  detail "$WORKSPACE_APP_URL"
+elif [ "$USES_CADDY" = "true" ]; then
   detail "https://$(basename "$(pwd)").localhost:${HTTPS_PORT}"
 else
   detail "http://localhost:${PORT}"

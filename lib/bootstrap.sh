@@ -6,9 +6,9 @@
 #   2. If default/main branch: just run app's own setup script and exit
 #   3. Sanitize workspace name (superset names only)
 #   4. Symlink shared files from root
-#   5. Detect and run app's own setup script
-#   6. Patch database.yml for workspace isolation (idempotent)
-#   7. Create workspace-specific databases
+#   5. Materialize and patch database.yml when possible
+#   6. Detect and run app's own setup script, then patch generated config
+#   7. Prepare workspace-specific databases idempotently
 #   8. Write .workspace file
 #   9. Run bin/workspace-bootstrap-hook if it exists
 
@@ -48,6 +48,13 @@ if ! is_default_workspace; then
   detail "Workspace: $WORKSPACE_NAME"
 fi
 
+# A non-default provider identity that sanitizes to nothing must not fall
+# through to the root/default path.
+if [ -n "$WORKSPACE_INVALID_NAME" ]; then
+  err "Workspace name cannot produce a safe isolated database suffix"
+  exit 1
+fi
+
 # ── Default workspace: just run setup, no isolation ──────────────
 
 if is_default_workspace; then
@@ -57,6 +64,11 @@ if is_default_workspace; then
   fi
   printf "\n${_green}  ✓${_reset} ${_bold}Setup complete${_reset}\n"
   exit 0
+fi
+
+if [ "$WORKSPACE_NAME" = "default" ]; then
+  err "Workspace name cannot produce a safe isolated database suffix"
+  exit 1
 fi
 
 # ── Symlink shared files from root ───────────────────────────────
@@ -148,6 +160,17 @@ fi
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
+# ── Materialize and patch DB config before project setup ─────────
+
+# Some projects generate config/database.yml locally. They can do that here so
+# the CLI can isolate it before bin/setup performs any database work.
+if [ -x bin/workspace-database-hook ]; then
+  header "Preparing database configuration"
+  bin/workspace-database-hook
+fi
+
+patch_database_yml
+
 # ── Run app's own setup script ───────────────────────────────────
 
 if [ -n "$SETUP_SCRIPT" ]; then
@@ -155,11 +178,12 @@ if [ -n "$SETUP_SCRIPT" ]; then
   $SETUP_SCRIPT
 fi
 
-# ── Patch database.yml for workspace isolation ───────────────────
+# A legacy setup script may itself create database.yml. Patch again afterward;
+# patch_database_yml is idempotent when the earlier pass already handled it.
 
 patch_database_yml
 
-# ── Create workspace databases ───────────────────────────────────
+# ── Prepare workspace databases ──────────────────────────────────
 
 create_workspace_databases
 

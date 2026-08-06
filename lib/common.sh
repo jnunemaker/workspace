@@ -19,6 +19,7 @@ divider() { printf "\n${_dim}─────────────────
 
 resolve_workspace() {
   WORKSPACE_PROVIDER=""
+  WORKSPACE_INVALID_NAME=""
   WORKSPACE_GIT_COMMON_DIR=""
   WORKSPACE_GIT_ROOT_PATH=""
   WORKSPACE_ROOT_PATH="${SUPERCONDUCTOR_ROOT_PATH:-${SUPERSET_ROOT_PATH:-$CONDUCTOR_ROOT_PATH}}"
@@ -139,6 +140,7 @@ prefer_workspace_file() {
     warn "Workspace name drift: env=\"$WORKSPACE_NAME\", .workspace=\"$_file_workspace\" — using the file."
   fi
   WORKSPACE_NAME="$_file_workspace"
+  WORKSPACE_INVALID_NAME=""
 }
 
 # ── Workspace name sanitization ────────────────────────────────────
@@ -148,6 +150,7 @@ prefer_workspace_file() {
 # historical branch-name behavior.
 # Sets: WORKSPACE_NAME (overwritten with sanitized value)
 sanitize_workspace_name() {
+  WORKSPACE_INVALID_NAME=""
   _raw_name="${SUPERCONDUCTOR_WORKSPACE_NAME:-$SUPERSET_WORKSPACE_NAME}"
   if [ "$WORKSPACE_PROVIDER" = "git" ]; then
     _raw_name="$WORKSPACE_NAME"
@@ -158,7 +161,26 @@ sanitize_workspace_name() {
       | sed 's/--*/-/g; s/^-//; s/-$//' \
       | cut -c1-40 \
       | sed 's/-$//')
+    [ -n "$WORKSPACE_NAME" ] || WORKSPACE_INVALID_NAME=1
   fi
+}
+
+# Import a dotenv file as defaults. Values already exported by the caller or
+# workspace manager are restored afterward, so the file cannot replace them.
+# Hooks sourced later may still deliberately override any value.
+load_dotenv_defaults() {
+  local _dotenv_file _dotenv_existing_exports _dotenv_status
+
+  _dotenv_file="${1:-.env}"
+  [ -f "$_dotenv_file" ] || return 0
+
+  _dotenv_existing_exports=$(export -p)
+  set -a
+  . "$_dotenv_file"
+  _dotenv_status=$?
+  set +a
+  [ "$_dotenv_status" -eq 0 ] || return "$_dotenv_status"
+  eval "$_dotenv_existing_exports"
 }
 
 # Print the base port for the current provider. Existing provider semantics are

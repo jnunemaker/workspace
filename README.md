@@ -29,9 +29,9 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next to `myapp`) and it will:
 
 1. Symlink shared files from the root checkout (`.env*`, `.bundle/`, `config/master.key`, `config/credentials/*.key`, `storage/`, `.tool-versions`, `ngrok.yml`).
-2. Run the app's own setup script (`bin/setup`, `script/setup`, etc.).
-3. Patch `config/database.yml` to suffix database names with the workspace name (idempotent).
-4. Create the workspace-specific databases.
+2. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
+3. Run the app's own setup script (`bin/setup`, `script/setup`, etc.), then patch again in case setup generated `database.yml`.
+4. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
 5. Write a `.workspace` file marking the workspace name.
 6. Run `bin/workspace-bootstrap-hook` if present.
 
@@ -76,10 +76,17 @@ Place any of these in your project's `bin/` directory to customize the workspace
 
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
-| `bin/workspace-seed` | After workspace DB schema load (during bootstrap) | Executed |
-| `bin/workspace-bootstrap-hook` | After DB creation, seeding, and `.workspace` file written | Executed |
-| `bin/workspace-run-hook` | Before foreman starts, after ports and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars for the server) |
+| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; use it to materialize `config/database.yml` locally | Executed |
+| `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
+| `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file written | Executed |
+| `bin/workspace-run-hook` | Before foreman starts, after dotenv, ports, and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars and `WORKSPACE_APP_URL` for the server) |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
+
+If a project's setup script both creates `config/database.yml` and immediately
+uses the database, move only the configuration-materialization step into
+`bin/workspace-database-hook`. That project-specific split cannot be inferred
+safely by the generic workspace lifecycle. Setup scripts that only create the
+file remain supported without a hook.
 
 `workspace init` generates a scaffold `bin/workspace-seed` with commented examples — uncomment the line that matches your project.
 
@@ -93,23 +100,28 @@ RAILS_ENV=development bin/rails db:fixtures:load
 # bin/workspace-run-hook — set an app-specific env var
 #!/bin/sh
 export DISABLE_SSL=true
+WORKSPACE_APP_URL="https://my-feature.example.test"
 
 # bin/workspace-archive-hook — clean up external resources
 #!/bin/sh
 bin/rails runner "Tenant.find_by(suffix: ENV['WORKSPACE_DB_SUFFIX'])&.destroy"
 ```
 
-## Claude Code skill
+## Claude Code and Codex skill
 
-If you have [Claude Code](https://claude.com/claude-code) installed, the installer also symlinks a skill into `~/.claude/skills/workspace/` so Claude knows how to drive this CLI (when to run `init` vs `bootstrap`, what the lifecycle hooks do, common workflows). It updates automatically whenever you run `workspace update`.
+If you have [Claude Code](https://claude.com/claude-code) or Codex installed, the installer also symlinks the workspace skill into the existing `~/.claude/skills/workspace/` and `${CODEX_HOME:-~/.codex}/skills/workspace/` directories. The skill teaches both agents when to run `init` vs `bootstrap`, what the lifecycle hooks do, and the common workflows. It updates automatically whenever you run `workspace update`.
 
-To skip it, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` before running the installer.
+To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_CODEX_SKILL=1` before running the installer.
 
 ## Environment
 
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
 - `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
+- `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
+- `WORKSPACE_APP_URL` — set by `bin/workspace-run-hook` to override the URL displayed before Foreman starts
+
+`workspace run` loads the linked `.env` as defaults before sourcing the run hook. Values already exported by the workspace manager, and values exported by the hook, take precedence. Keep `.env` shell-compatible because the CLI sources it with `/bin/sh`.
 
 ## Tests
 

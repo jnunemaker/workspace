@@ -121,7 +121,7 @@ fi
 app_dir=$(create_fake_app "seed-runs")
 cd "$app_dir"
 
-# Fake bin/rails so db:create and db:schema:load don't fail
+# Fake bin/rails so db:prepare succeeds
 cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 exit 0
@@ -139,6 +139,22 @@ WORKSPACE_NAME="test-ws"
 create_workspace_databases 2>/dev/null
 
 assert_true "bin/workspace-seed was executed" [ -f .seed-ran ]
+
+# ── create_workspace_databases: seeds projects without Rails ────
+
+app_dir=$(create_fake_app "seed-without-rails")
+cd "$app_dir"
+
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+printf '%s\n' "$WORKSPACE_DB_SUFFIX" > .seed-suffix
+SCRIPT
+chmod +x bin/workspace-seed
+
+WORKSPACE_NAME="non-rails-ws"
+assert_true "non-Rails database setup still succeeds" create_workspace_databases
+assert_true "bin/workspace-seed runs without bin/rails" [ -f .seed-suffix ]
+assert_equal "non-Rails seed receives workspace suffix" "_non-rails-ws" "$(cat .seed-suffix)"
 
 # ── create_workspace_databases: skips seed when not present ─────
 
@@ -177,6 +193,89 @@ WORKSPACE_NAME="test-ws"
 create_workspace_databases 2>/dev/null
 
 assert_false "non-executable seed is skipped" [ -f .seed-ran ]
+
+# ── create_workspace_databases: idempotent and failure-aware ────
+
+app_dir=$(create_fake_app "prepare-command")
+cd "$app_dir"
+printf 'development:\n  database: app_development\n' > config/database.yml
+prepare_log="$TEST_TMP/prepare-command.log"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_PREPARE_LOG"
+exit 0
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="prepared-ws"
+WORKSPACE_TEST_PREPARE_LOG="$prepare_log"
+export WORKSPACE_TEST_PREPARE_LOG
+assert_true "database preparation succeeds" create_workspace_databases
+assert_true "development uses db:prepare" grep -q '^development:_prepared-ws:db:prepare$' "$prepare_log"
+assert_true "test uses db:prepare" grep -q '^test:_prepared-ws:db:prepare$' "$prepare_log"
+assert_false "database preparation does not schema-load" grep -q 'db:schema:load' "$prepare_log"
+
+# Older Rails versions without db:prepare use create + migrate, never a
+# destructive schema load. Other preparation failures must not fall back.
+app_dir=$(create_fake_app "legacy-rails-prepare")
+cd "$app_dir"
+legacy_prepare_log="$TEST_TMP/legacy-rails-prepare.log"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+printf '%s:%s\n' "$RAILS_ENV" "$*" >> "$WORKSPACE_TEST_LEGACY_PREPARE_LOG"
+case "$1" in
+  db:prepare) exit 1 ;;
+  --tasks) printf 'rails db:create\nrails db:migrate\n'; exit 0 ;;
+  db:create|db:migrate) exit 0 ;;
+  *) exit 1 ;;
+esac
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="legacy-rails-ws"
+WORKSPACE_TEST_LEGACY_PREPARE_LOG="$legacy_prepare_log"
+export WORKSPACE_TEST_LEGACY_PREPARE_LOG
+assert_true "Rails without db:prepare uses safe fallback" create_workspace_databases
+assert_true "legacy development database is created" grep -q '^development:db:create$' "$legacy_prepare_log"
+assert_true "legacy development database is migrated" grep -q '^development:db:migrate$' "$legacy_prepare_log"
+assert_true "legacy test database is created" grep -q '^test:db:create$' "$legacy_prepare_log"
+assert_true "legacy test database is migrated" grep -q '^test:db:migrate$' "$legacy_prepare_log"
+assert_false "legacy fallback never schema-loads" grep -q 'db:schema:load' "$legacy_prepare_log"
+
+prepare_failure_log="$TEST_TMP/prepare-runtime-failure.log"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+printf '%s:%s\n' "$RAILS_ENV" "$*" >> "$WORKSPACE_TEST_PREPARE_FAILURE_LOG"
+case "$1" in
+  db:prepare) exit 1 ;;
+  --tasks) printf 'rails db:prepare\n'; exit 0 ;;
+  db:create|db:migrate) touch .unsafe-prepare-fallback; exit 0 ;;
+  *) exit 1 ;;
+esac
+SCRIPT
+chmod +x bin/rails
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+touch .seed-ran-after-prepare-failure
+SCRIPT
+chmod +x bin/workspace-seed
+WORKSPACE_TEST_PREPARE_FAILURE_LOG="$prepare_failure_log"
+export WORKSPACE_TEST_PREPARE_FAILURE_LOG
+prepare_failure_output="$TEST_TMP/prepare-failure-output.log"
+assert_false "present db:prepare task propagates runtime failures" create_workspace_databases > "$prepare_failure_output" 2>&1
+assert_false "failed db:prepare never uses legacy fallback" [ -f .unsafe-prepare-fallback ]
+assert_false "failed database preparation does not seed" [ -f .seed-ran-after-prepare-failure ]
+assert_false "failed database preparation is not reported ready" grep -q 'database ready' "$prepare_failure_output"
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+touch .rails-called
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="default"
+assert_false "literal default cannot be an isolated database suffix" create_workspace_databases
+assert_false "default protection runs before Rails" [ -f .rails-called ]
+assert_false "literal default cannot use legacy database cleanup" drop_workspace_databases
+assert_false "literal default cannot use strict database cleanup" drop_workspace_databases_strict
+assert_false "cleanup default protection runs before Rails" [ -f .rails-called ]
 
 # ── drop_workspace_databases_strict ─────────────────────────────
 
