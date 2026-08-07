@@ -3,14 +3,16 @@
 #
 # Flow:
 #   1. Resolve workspace name and root path
-#   2. If default/main branch: just run app's own setup script and exit
+#   2. If default/main branch: run the app's ordinary setup script and exit
 #   3. Sanitize workspace name (superset names only)
 #   4. Symlink shared files from root
-#   5. Materialize and patch database.yml when possible
-#   6. Detect and run app's own setup script, then patch generated config
-#   7. Prepare workspace-specific databases idempotently
-#   8. Write .workspace file
-#   9. Run bin/workspace-bootstrap-hook if it exists
+#   5. Export WORKSPACE_DB_SUFFIX
+#   6. Materialize and patch database.yml when possible
+#   7. Run bin/workspace-setup-hook, or fall back to the app setup script
+#      when the dedicated hook is absent, then patch generated config
+#   8. Prepare workspace-specific databases idempotently
+#   9. Write .workspace file
+#  10. Run bin/workspace-bootstrap-hook if it exists
 
 set -e
 
@@ -19,6 +21,18 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/detect.sh"
 . "$WORKSPACE_LIB/db.sh"
 . "$WORKSPACE_LIB/registry.sh"
+
+[ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] && {
+  echo "Usage: workspace bootstrap"
+  echo ""
+  echo "Root/default checkout: runs the project's ordinary setup script only."
+  echo "Managed sibling ordering: shared files → WORKSPACE_DB_SUFFIX → database"
+  echo "configuration hook → workspace setup hook (or legacy setup fallback) →"
+  echo "database preparation → optional seed and bootstrap hooks."
+  echo ""
+  echo "Workspace never runs bin/update."
+  exit 0
+}
 
 resolve_workspace
 sanitize_workspace_name
@@ -73,6 +87,40 @@ fi
 
 # ── Symlink shared files from root ───────────────────────────────
 
+link_shared_file() {
+  _shared_source="$1"
+  _shared_destination="$2"
+
+  # A tracked file belongs to the checked-out branch. Replacing it with the
+  # root checkout's version would silently erase branch-specific tool/runtime
+  # configuration (most commonly .tool-versions).
+  if git ls-files --error-unmatch -- "$_shared_destination" >/dev/null 2>&1; then
+    step "$_shared_destination is tracked — keeping workspace copy"
+    return 0
+  fi
+
+  ln -sf "$_shared_source" "$_shared_destination"
+  ok "$_shared_destination"
+}
+
+link_shared_directory() {
+  _shared_source="$1"
+  _shared_destination="$2"
+  _shared_label="$3"
+
+  if git ls-files -- "$_shared_destination" 2>/dev/null | grep -q .; then
+    step "$_shared_destination contains tracked files — keeping workspace copy"
+    return 0
+  fi
+
+  if [ -d "$_shared_destination" ] && [ ! -L "$_shared_destination" ]; then
+    rm -rf "$_shared_destination"
+  fi
+
+  ln -sfn "$_shared_source" "$_shared_destination"
+  ok "$_shared_label"
+}
+
 if [ -n "$WORKSPACE_ROOT_PATH" ]; then
   # Detect if we're the root workspace itself (prevent circular symlinks)
   _root_real=$(cd "$WORKSPACE_ROOT_PATH" 2>/dev/null && pwd -P || echo "")
@@ -85,25 +133,19 @@ if [ -n "$WORKSPACE_ROOT_PATH" ]; then
 
     # .bundle — Bundler config and cached gems
     if [ -d "$WORKSPACE_ROOT_PATH/.bundle" ]; then
-      if [ -d .bundle ] && [ ! -L .bundle ]; then
-        rm -rf .bundle
-      fi
-      ln -sfn "$WORKSPACE_ROOT_PATH/.bundle" .bundle
-      ok ".bundle"
+      link_shared_directory "$WORKSPACE_ROOT_PATH/.bundle" .bundle .bundle
     fi
 
     # Dotenv files
     for env_file in .env .env.development .env.test; do
       if [ -f "$WORKSPACE_ROOT_PATH/$env_file" ]; then
-        ln -sf "$WORKSPACE_ROOT_PATH/$env_file" "$env_file"
-        ok "$env_file"
+        link_shared_file "$WORKSPACE_ROOT_PATH/$env_file" "$env_file"
       fi
     done
 
     # Rails master key
     if [ -f "$WORKSPACE_ROOT_PATH/config/master.key" ]; then
-      ln -sf "$WORKSPACE_ROOT_PATH/config/master.key" config/master.key
-      ok "config/master.key"
+      link_shared_file "$WORKSPACE_ROOT_PATH/config/master.key" config/master.key
     fi
 
     # Per-environment credential keys
@@ -112,31 +154,24 @@ if [ -n "$WORKSPACE_ROOT_PATH" ]; then
       for key_file in "$WORKSPACE_ROOT_PATH"/config/credentials/*.key; do
         if [ -f "$key_file" ]; then
           key_name=$(basename "$key_file")
-          ln -sf "$key_file" "config/credentials/$key_name"
-          ok "config/credentials/$key_name"
+          link_shared_file "$key_file" "config/credentials/$key_name"
         fi
       done
     fi
 
     # Active Storage files
     if [ -d "$WORKSPACE_ROOT_PATH/storage" ]; then
-      if [ -d storage ] && [ ! -L storage ]; then
-        rm -rf storage
-      fi
-      ln -sfn "$WORKSPACE_ROOT_PATH/storage" storage
-      ok "storage/"
+      link_shared_directory "$WORKSPACE_ROOT_PATH/storage" storage "storage/"
     fi
 
     # .tool-versions (asdf/mise)
     if [ -f "$WORKSPACE_ROOT_PATH/.tool-versions" ]; then
-      ln -sf "$WORKSPACE_ROOT_PATH/.tool-versions" .tool-versions
-      ok ".tool-versions"
+      link_shared_file "$WORKSPACE_ROOT_PATH/.tool-versions" .tool-versions
     fi
 
     # ngrok.yml
     if [ -f "$WORKSPACE_ROOT_PATH/ngrok.yml" ]; then
-      ln -sf "$WORKSPACE_ROOT_PATH/ngrok.yml" ngrok.yml
-      ok "ngrok.yml"
+      link_shared_file "$WORKSPACE_ROOT_PATH/ngrok.yml" ngrok.yml
     fi
   fi
 else
@@ -171,10 +206,13 @@ fi
 
 patch_database_yml
 
-# ── Run app's own setup script ───────────────────────────────────
+# ── Run managed setup hook or legacy setup fallback ─────────────
 
-if [ -n "$SETUP_SCRIPT" ]; then
-  header "Running project setup"
+if [ -x bin/workspace-setup-hook ]; then
+  header "Running workspace setup hook"
+  bin/workspace-setup-hook
+elif [ -n "$SETUP_SCRIPT" ]; then
+  header "Running project setup (legacy fallback)"
   $SETUP_SCRIPT
 fi
 

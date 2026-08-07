@@ -20,6 +20,7 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 | `bootstrap` | Set up a workspace — symlink shared files, run app setup, create isolated DBs |
 | `run`       | Start the dev server for this workspace                         |
 | `archive`   | Tear down a workspace — kill processes, drop DBs                |
+| `info`      | Show provider, identity, URL, suffix, and allocated ports       |
 | `prune`     | Clean resources for Git worktrees removed by an external tool    |
 | `update`    | Pull the latest CLI from GitHub                                 |
 | `version`   | Print the current version                                       |
@@ -28,26 +29,43 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
 Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next to `myapp`) and it will:
 
-1. Symlink shared files from the root checkout (`.env*`, `.bundle/`, `config/master.key`, `config/credentials/*.key`, `storage/`, `.tool-versions`, `ngrok.yml`).
-2. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
-3. Run the app's own setup script (`bin/setup`, `script/setup`, etc.), then patch again in case setup generated `database.yml`.
-4. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
-5. Write a `.workspace` file marking the workspace name.
-6. Run `bin/workspace-bootstrap-hook` if present.
+1. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
+2. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
+3. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
+4. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
+5. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
+6. Run the optional seed hook, write `.workspace`, then run the optional bootstrap hook.
 
-The root/default workspace is left alone — only siblings get isolated.
+The root/default checkout keeps the normal application-development contract:
+`bin/setup` for first setup, `bin/update` after pulls, and `bin/dev` to run.
+`workspace bootstrap` there only falls back to ordinary setup detection; it does
+not run managed hooks, link files, suffix databases, or call `bin/update`.
+Workspace lifecycle commands never invoke `bin/update`.
+
+`workspace init` creates a committed project entrypoint at `bin/workspace` and a
+minimum revision contract at `.workspace-version`. Generated Codex, Conductor,
+Superset, and Superconductor commands use this entrypoint. It first tries
+`workspace` on `PATH`, then `${WORKSPACE_HOME:-$HOME/.workspace}/bin/workspace`,
+so provider shells do not need to load user dotfiles. A missing install prints
+the one-time install command; an older install prints the exact update command.
+It never installs or updates Workspace automatically.
+
+Use `bin/workspace info` to see the provider, workspace name, root path,
+database suffix, application URL, and reserved 10-port block.
 
 ## Codex worktrees
 
 When those files do not already exist, `workspace init` creates
 `.codex/environments/environment.toml` with:
 
-- A setup script that runs `workspace bootstrap` whenever Codex creates a worktree.
-- A **Run** action that runs `workspace run`.
+- A setup script that runs `bin/workspace bootstrap` whenever Codex creates a worktree.
+- **Run** and **Workspace info** actions that use `bin/workspace`.
 - An **Archive workspace** action for explicit manual teardown.
 
-It also creates a project-local `SessionEnd` hook in `.codex/hooks.json`. Existing
-Codex environment and hook files are left unchanged. Codex
+It also creates a project-local `SessionEnd` hook in `.codex/hooks.json`. In
+existing Codex files, recognized Workspace commands are upgraded to use the
+shim and a missing **Workspace info** action is added; custom commands and
+linked configuration files are left unchanged. Codex
 does not distinguish an archived chat from an ordinary app close or idle
 session in that hook, so the hook never archives the current workspace
 directly. Instead, it schedules `workspace prune`, which waits for Git to
@@ -77,18 +95,21 @@ Place any of these in your project's `bin/` directory to customize the workspace
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
 | `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; use it to materialize `config/database.yml` locally | Executed |
+| `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file written | Executed |
 | `bin/workspace-run-hook` | Before foreman starts, after dotenv, ports, and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars and `WORKSPACE_APP_URL` for the server) |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
 
-If a project's setup script both creates `config/database.yml` and immediately
-uses the database, move only the configuration-materialization step into
-`bin/workspace-database-hook`. That project-specific split cannot be inferred
-safely by the generic workspace lifecycle. Setup scripts that only create the
-file remain supported without a hook.
+Use `bin/workspace-setup-hook` for dependency installation or other setup that
+belongs only to managed sibling workspaces. Keep `bin/setup`, `bin/update`, and
+`bin/dev` focused on ordinary root-checkout development. If database
+configuration must exist before the setup hook itself runs, materialize it in
+`bin/workspace-database-hook`. Existing projects without the dedicated setup
+hook retain the legacy setup fallback.
 
-`workspace init` generates a scaffold `bin/workspace-seed` with commented examples — uncomment the line that matches your project.
+All hooks are optional. `workspace init` deliberately does not scaffold empty
+hooks; add and commit only the hooks the project actually needs.
 
 Examples:
 

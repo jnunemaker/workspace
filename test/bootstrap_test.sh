@@ -19,6 +19,10 @@ run_superset_bootstrap() {
     WORKSPACE_TEST_LOG="$3" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 }
 
+output_has() {
+  printf '%s\n' "$1" | grep -q "$2"
+}
+
 make_bootstrap_app() {
   app_dir=$(create_fake_app "$1")
   root_dir=$(create_fake_root "$1")
@@ -43,6 +47,11 @@ printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPAC
 SCRIPT
   chmod +x bin/setup bin/rails
 }
+
+help_output=$(sh "$WORKSPACE_HOME/lib/bootstrap.sh" --help)
+assert_true "bootstrap help documents dedicated setup hook" output_has "$help_output" 'workspace setup hook'
+assert_true "bootstrap help documents legacy setup fallback" output_has "$help_output" 'legacy setup fallback'
+assert_true "bootstrap help says bin/update is never run" output_has "$help_output" 'never runs bin/update'
 
 # A project can materialize database.yml before its ordinary setup script. The
 # CLI patches it before setup, then uses non-destructive db:prepare afterward.
@@ -87,6 +96,103 @@ assert_true "test database uses db:prepare" grep -q '^rails:test:_feature-one:db
 assert_false "bootstrap never schema-loads after setup" grep -q 'db:schema:load' "$log"
 assert_true "data created by setup is preserved" grep -q 'seeded-data' .setup-data
 assert_true "database.yml is patched before setup" grep -q WORKSPACE_DB_SUFFIX config/database.yml
+
+# A managed sibling's dedicated setup hook runs after shared files and the
+# suffix exist, and replaces (rather than supplements) ordinary bin/setup.
+paths=$(make_bootstrap_app "dedicated-setup-hook")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/dedicated-setup-hook.log"
+cd "$app_dir"
+printf 'shared=true\n' > "$root_dir/.env"
+cat > config/database.yml <<'YAML'
+development:
+  database: hook_development
+test:
+  database: hook_test
+YAML
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > bin/workspace-setup-hook <<'SCRIPT'
+#!/bin/sh
+[ -L .env ] || exit 1
+[ "${shared:-}" = "true" ] || exit 1
+printf 'workspace-setup:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > bin/setup <<'SCRIPT'
+#!/bin/sh
+touch .ordinary-setup-called
+SCRIPT
+cat > bin/update <<'SCRIPT'
+#!/bin/sh
+touch .update-called
+SCRIPT
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+printf 'rails:%s:%s\n' "$RAILS_ENV" "$*" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+printf 'seed:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > bin/workspace-bootstrap-hook <<'SCRIPT'
+#!/bin/sh
+printf 'bootstrap:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x bin/workspace-database-hook bin/workspace-setup-hook bin/setup bin/update bin/rails bin/workspace-seed bin/workspace-bootstrap-hook
+
+assert_true "dedicated workspace setup hook succeeds" run_bootstrap "$root_dir" "dedicated-hook" "$log"
+assert_equal "dedicated lifecycle has explicit ordering" "database:_dedicated-hook
+workspace-setup:_dedicated-hook
+rails:development:db:prepare
+rails:test:db:prepare
+seed:_dedicated-hook
+bootstrap:_dedicated-hook" "$(cat "$log")"
+assert_false "dedicated hook prevents ordinary bin/setup" [ -f .ordinary-setup-called ]
+assert_false "workspace lifecycle never invokes bin/update" [ -f .update-called ]
+
+# A failing dedicated hook is a hard lifecycle boundary. Nothing after it may
+# prepare databases, register the workspace, seed data, or report success.
+paths=$(make_bootstrap_app "failing-setup-hook")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/failing-setup-hook.log"
+output="$TEST_TMP/failing-setup-hook.out"
+cd "$app_dir"
+cat > config/database.yml <<'YAML'
+development:
+  database: hook_failure_development
+test:
+  database: hook_failure_test
+YAML
+cat > bin/workspace-setup-hook <<'SCRIPT'
+#!/bin/sh
+printf 'workspace-setup:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+exit 42
+SCRIPT
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+touch .rails-called
+SCRIPT
+cat > bin/workspace-seed <<'SCRIPT'
+#!/bin/sh
+touch .seed-called
+SCRIPT
+cat > bin/workspace-bootstrap-hook <<'SCRIPT'
+#!/bin/sh
+touch .bootstrap-hook-called
+SCRIPT
+chmod +x bin/workspace-setup-hook bin/rails bin/workspace-seed bin/workspace-bootstrap-hook
+
+assert_false "failing workspace setup hook fails bootstrap" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="failing-hook" WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_equal "failing setup hook runs with isolated suffix" "workspace-setup:_failing-hook" "$(cat "$log")"
+assert_false "failed setup hook prevents database preparation" [ -f .rails-called ]
+assert_false "failed setup hook prevents workspace registration" [ -f .workspace ]
+assert_false "failed setup hook prevents seeding" [ -f .seed-called ]
+assert_false "failed setup hook prevents bootstrap hook" [ -f .bootstrap-hook-called ]
+assert_false "failed setup hook does not report setup complete" grep -q 'Setup complete' "$output"
 
 # Superconductor and Superset use the same successful lifecycle while retaining
 # their provider-specific identity inputs. Their sanitized names must propagate
@@ -201,14 +307,124 @@ cat > bin/setup <<'SCRIPT'
 #!/bin/sh
 printf 'root-setup:%s\n' "${WORKSPACE_DB_SUFFIX:-unset}" > "$WORKSPACE_TEST_LOG"
 SCRIPT
+cat > bin/workspace-setup-hook <<'SCRIPT'
+#!/bin/sh
+touch .workspace-setup-called
+SCRIPT
+cat > bin/update <<'SCRIPT'
+#!/bin/sh
+touch .update-called
+SCRIPT
 cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 touch .rails-called
 SCRIPT
-chmod +x bin/setup bin/rails
+chmod +x bin/setup bin/workspace-setup-hook bin/update bin/rails
 assert_true "manager default remains a root setup" run_bootstrap "$root_dir" "default" "$log"
 assert_equal "root setup has no isolated suffix" "root-setup:unset" "$(cat "$log")"
 assert_false "root setup does not prepare isolated databases" [ -f .rails-called ]
+assert_false "root setup ignores managed workspace setup hook" [ -f .workspace-setup-called ]
+assert_false "root setup never invokes bin/update" [ -f .update-called ]
+
+# Shared tracked files remain branch-owned instead of becoming root symlinks.
+paths=$(make_bootstrap_app "tracked-shared-file")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/tracked-shared-file.log"
+cd "$app_dir"
+printf 'ruby 3.4.1\n' > .tool-versions
+printf 'ruby 3.3.0\n' > "$root_dir/.tool-versions"
+git init -q
+git add .tool-versions
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+assert_true "bootstrap preserves tracked shared file" run_bootstrap "$root_dir" "tracked-file" "$log"
+assert_false "tracked shared file is not a symlink" [ -L .tool-versions ]
+assert_equal "tracked shared file keeps branch contents" "ruby 3.4.1" "$(cat .tool-versions)"
+
+# Shared directories with tracked descendants are branch-owned too. Preserve
+# the complete workspace directory, including modifications made after the
+# tracked file entered the index, instead of replacing it with the root copy.
+paths=$(make_bootstrap_app "tracked-shared-directories")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+output="$TEST_TMP/tracked-shared-directories.out"
+cd "$app_dir"
+mkdir -p storage .bundle "$root_dir/storage" "$root_dir/.bundle"
+printf 'workspace storage committed\n' > storage/.keep
+printf 'workspace bundle committed\n' > .bundle/config
+git init -q
+git add storage/.keep .bundle/config
+printf 'workspace storage modified\n' > storage/.keep
+printf 'workspace bundle modified\n' > .bundle/config
+printf 'root storage\n' > "$root_dir/storage/.keep"
+printf 'root bundle\n' > "$root_dir/.bundle/config"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+assert_true "bootstrap preserves tracked shared directories" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-directories" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_false "tracked storage directory is not a symlink" [ -L storage ]
+assert_false "tracked bundle directory is not a symlink" [ -L .bundle ]
+assert_equal "tracked storage keeps local modification" "workspace storage modified" "$(cat storage/.keep)"
+assert_equal "tracked bundle keeps local modification" "workspace bundle modified" "$(cat .bundle/config)"
+assert_true "tracked storage skip is explained" grep -q 'storage contains tracked files.*keeping workspace copy' "$output"
+assert_true "tracked bundle skip is explained" grep -q '\.bundle contains tracked files.*keeping workspace copy' "$output"
+
+# Tracked path ownership applies even when the shared-directory name is a
+# symlink or regular file rather than a directory.
+paths=$(make_bootstrap_app "tracked-shared-path-types")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+output="$TEST_TMP/tracked-shared-path-types.out"
+cd "$app_dir"
+mkdir -p linked-storage "$root_dir/storage" "$root_dir/.bundle"
+printf 'workspace bundle file\n' > .bundle
+ln -s linked-storage storage
+git init -q
+git add .bundle storage
+printf 'root storage\n' > "$root_dir/storage/shared"
+printf 'root bundle\n' > "$root_dir/.bundle/shared"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+assert_true "bootstrap preserves tracked shared path types" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-path-types" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_equal "tracked storage symlink keeps its branch target" "linked-storage" "$(readlink storage)"
+assert_false "tracked bundle regular file is not replaced" [ -L .bundle ]
+assert_equal "tracked bundle regular file keeps branch contents" "workspace bundle file" "$(cat .bundle)"
+
+# Directories containing only untracked workspace data retain the historical
+# behavior: Workspace replaces them with links to the root checkout.
+paths=$(make_bootstrap_app "untracked-shared-directories")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/untracked-shared-directories.log"
+cd "$app_dir"
+mkdir -p storage .bundle "$root_dir/storage" "$root_dir/.bundle"
+printf 'workspace only\n' > storage/local
+printf 'workspace only\n' > .bundle/local
+printf 'root storage\n' > "$root_dir/storage/shared"
+printf 'root bundle\n' > "$root_dir/.bundle/shared"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+chmod +x bin/rails
+
+assert_true "bootstrap links untracked shared directories" run_bootstrap "$root_dir" "untracked-directories" "$log"
+assert_true "untracked storage becomes a symlink" [ -L storage ]
+assert_true "untracked bundle becomes a symlink" [ -L .bundle ]
+assert_equal "storage links to root directory" "$root_dir/storage" "$(readlink storage)"
+assert_equal "bundle links to root directory" "$root_dir/.bundle" "$(readlink .bundle)"
 
 paths=$(make_bootstrap_app "invalid-name")
 app_dir=${paths%%|*}

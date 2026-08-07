@@ -5,6 +5,7 @@
 #   bootstrap  Initialize a workspace (symlinks, deps, DB)
 #   run        Start the dev server
 #   archive    Tear down a workspace (kill processes, drop DBs)
+#   info       Show the detected workspace identity and resources
 #   prune      Clean resources for Git worktrees removed externally
 #   update     Pull latest from GitHub and reinstall
 #   version    Print the current version
@@ -14,7 +15,15 @@
 
 set -e
 
-WORKSPACE_HOME="${WORKSPACE_HOME:-$HOME/.workspace}"
+if [ -z "${WORKSPACE_HOME:-}" ]; then
+  _workspace_home_candidate=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+  if [ -f "$_workspace_home_candidate/lib/common.sh" ]; then
+    WORKSPACE_HOME="$_workspace_home_candidate"
+  else
+    WORKSPACE_HOME="${HOME:-}/.workspace"
+  fi
+  unset _workspace_home_candidate
+fi
 VERSION=$(git -C "$WORKSPACE_HOME" log -1 --format="%h (%cs)" 2>/dev/null || echo "unknown")
 
 usage() {
@@ -27,6 +36,7 @@ usage() {
   echo "  bootstrap  Initialize a workspace (symlinks, deps, DB)"
   echo "  run        Start the dev server"
   echo "  archive    Tear down a workspace (kill processes, drop DBs)"
+  echo "  info       Show provider, identity, URL, and allocated ports"
   echo "  prune      Clean resources for removed Git worktrees"
   echo "  update     Pull latest from GitHub and reinstall"
   echo "  version    Print the current version"
@@ -50,6 +60,10 @@ case "${1:-}" in
   archive)
     shift
     exec sh "$WORKSPACE_HOME/lib/archive.sh" "$@"
+    ;;
+  info)
+    shift
+    exec sh "$WORKSPACE_HOME/lib/info.sh" "$@"
     ;;
   prune)
     shift

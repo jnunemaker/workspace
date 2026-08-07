@@ -17,38 +17,47 @@ run_init
 assert_true ".conductor/settings.toml created" [ -f .conductor/settings.toml ]
 assert_true "settings.toml has schema" grep -q 'settings.repo.schema.json' .conductor/settings.toml
 assert_true "settings.toml has scripts table" grep -q '\[scripts\]' .conductor/settings.toml
-assert_true "settings.toml has setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
-assert_true "settings.toml has run script" grep -q 'run = "workspace run"' .conductor/settings.toml
-assert_true "settings.toml has archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
+assert_true "settings.toml has shim setup script" grep -q 'setup = "bin/workspace bootstrap"' .conductor/settings.toml
+assert_true "settings.toml has shim run script" grep -q 'run = "bin/workspace run"' .conductor/settings.toml
+assert_true "settings.toml has shim archive script" grep -q 'archive = "bin/workspace archive"' .conductor/settings.toml
 
 # ── init: creates .superconductor/config.json ───────────────────
 
 assert_true ".superconductor/config.json created" [ -f .superconductor/config.json ]
-assert_true "superconductor config has setup script" grep -q 'workspace bootstrap' .superconductor/config.json
-assert_true "superconductor config has run script" grep -q 'workspace run' .superconductor/config.json
+assert_true "superconductor config has shim setup script" grep -q 'bin/workspace bootstrap' .superconductor/config.json
+assert_true "superconductor config has shim run script" grep -q 'bin/workspace run' .superconductor/config.json
 
 # ── init: creates .superset/config.json ─────────────────────────
 
 assert_true ".superset/config.json created" [ -f .superset/config.json ]
-assert_true "superset config has setup script" grep -q 'workspace bootstrap' .superset/config.json
-assert_true "superset config has teardown script" grep -q 'workspace archive' .superset/config.json
+assert_true "superset config has shim setup script" grep -q 'bin/workspace bootstrap' .superset/config.json
+assert_true "superset config has shim teardown script" grep -q 'bin/workspace archive' .superset/config.json
 
 # ── Codex local environment and lifecycle hook ────────────────────────
 
 assert_true "codex environment created" [ -f .codex/environments/environment.toml ]
-assert_true "codex environment runs bootstrap" grep -q 'script = "workspace bootstrap"' .codex/environments/environment.toml
-assert_true "codex environment has run action" grep -q 'command = "workspace run"' .codex/environments/environment.toml
+assert_true "codex environment runs shim bootstrap" grep -q 'script = "bin/workspace bootstrap"' .codex/environments/environment.toml
+assert_true "codex environment has shim run action" grep -q 'command = "bin/workspace run"' .codex/environments/environment.toml
+assert_true "codex environment has shim info action" grep -q 'command = "bin/workspace info"' .codex/environments/environment.toml
+assert_true "codex environment has shim archive action" grep -q 'command = "bin/workspace archive"' .codex/environments/environment.toml
 assert_true "codex hooks created" [ -f .codex/hooks.json ]
-assert_true "codex hooks schedule prune" grep -q 'workspace prune --deferred' .codex/hooks.json
+assert_true "codex hooks schedule shim prune" grep -q 'bin/workspace prune --deferred' .codex/hooks.json
 assert_true "codex hooks contain valid JSON" ruby -rjson -e 'JSON.parse(File.read(".codex/hooks.json"))'
 
-# ── init: creates bin/workspace-seed ────────────────────────────
+# ── init: creates the entrypoint and no optional hook scaffolds ──
 
-assert_true "bin/workspace-seed created" [ -f bin/workspace-seed ]
-assert_true "bin/workspace-seed is executable" [ -x bin/workspace-seed ]
-assert_true "seed file mentions fixtures" grep -q 'db:fixtures:load' bin/workspace-seed
-assert_true "seed file mentions db:seed" grep -q 'db:seed' bin/workspace-seed
-assert_true "seed file mentions custom rake" grep -q 'plan:seed' bin/workspace-seed
+assert_true "bin/workspace created" [ -f bin/workspace ]
+assert_true "bin/workspace is executable" [ -x bin/workspace ]
+assert_true "minimum version contract created" [ -s .workspace-version ]
+assert_false "optional seed hook is not scaffolded" [ -e bin/workspace-seed ]
+assert_false "optional setup hook is not scaffolded" [ -e bin/workspace-setup-hook ]
+
+future_revision=ffffffffffffffffffffffffffffffffffffffff
+printf '%s\n' "$future_revision" > .workspace-version
+version_output="$TEST_TMP/init-version-downgrade.out"
+assert_true "global init preserves an unrecognized newer version contract" sh "$WORKSPACE_HOME/lib/init.sh" >"$version_output" 2>&1
+assert_equal "newer minimum revision is not downgraded" "$future_revision" "$(cat .workspace-version)"
+assert_true "preserved newer revision is explained" grep -q 'newer than this install.*leaving it unchanged' "$version_output"
 
 # ── init: doesn't overwrite existing bin/workspace-seed ─────────
 
@@ -88,6 +97,26 @@ assert_true "migrated setup script" grep -q 'setup = "bin/legacy-setup"' .conduc
 assert_true "migrated run script" grep -q 'run = "bin/legacy-run"' .conductor/settings.toml
 assert_true "migrated archive script" grep -q 'archive = "bin/legacy-archive"' .conductor/settings.toml
 
+# Legacy Conductor defaults should follow the same project-local entrypoint
+# migration as existing provider configs, while custom values remain untouched.
+app_dir=$(create_fake_app "init-migrate-conductor-workspace-defaults")
+cd "$app_dir"
+cat > conductor.json <<'EOF'
+{
+  "scripts": {
+    "setup": "workspace bootstrap",
+    "run": "bin/custom-run",
+    "archive": "workspace archive"
+  }
+}
+EOF
+
+run_init
+
+assert_true "legacy Conductor setup default uses shim" grep -q 'setup = "bin/workspace bootstrap"' .conductor/settings.toml
+assert_true "legacy Conductor custom run remains unchanged" grep -q 'run = "bin/custom-run"' .conductor/settings.toml
+assert_true "legacy Conductor archive default uses shim" grep -q 'archive = "bin/workspace archive"' .conductor/settings.toml
+
 # ── init: migrating a scriptless conductor.json falls back to defaults ──
 
 app_dir=$(create_fake_app "init-migrate-empty")
@@ -100,9 +129,9 @@ run_init
 
 assert_false "scriptless conductor.json removed" [ -f conductor.json ]
 assert_true "fallback settings.toml created" [ -f .conductor/settings.toml ]
-assert_true "fallback uses default setup script" grep -q 'setup = "workspace bootstrap"' .conductor/settings.toml
-assert_true "fallback uses default run script" grep -q 'run = "workspace run"' .conductor/settings.toml
-assert_true "fallback uses default archive script" grep -q 'archive = "workspace archive"' .conductor/settings.toml
+assert_true "fallback uses shim setup script" grep -q 'setup = "bin/workspace bootstrap"' .conductor/settings.toml
+assert_true "fallback uses shim run script" grep -q 'run = "bin/workspace run"' .conductor/settings.toml
+assert_true "fallback uses shim archive script" grep -q 'archive = "bin/workspace archive"' .conductor/settings.toml
 
 # ── init: maps legacy settings to their new schema names ────────
 # The repo schema is additionalProperties:false, so legacy field names must be
@@ -219,6 +248,147 @@ assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/c
 assert_true "codex environment not overwritten" grep -q 'custom-codex' .codex/environments/environment.toml
 assert_false "codex environment default not appended" grep -q 'workspace bootstrap' .codex/environments/environment.toml
 assert_false "codex hooks not overwritten" grep -q 'workspace prune' .codex/hooks.json
+
+# ── init: upgrades only known Workspace commands in existing configs ──
+
+app_dir=$(create_fake_app "init-upgrade-entrypoints")
+cd "$app_dir"
+mkdir -p .conductor .superconductor .superset .codex/environments
+cat > .conductor/settings.toml <<'EOF'
+[scripts]
+setup = "workspace bootstrap"
+run = "bin/custom-run"
+archive = "workspace archive"
+# Preserve example: "workspace bootstrap --custom"
+EOF
+cat > .superconductor/config.json <<'EOF'
+{"setup":["workspace bootstrap"],"run":["workspace run"]}
+EOF
+cat > .superset/config.json <<'EOF'
+{"setup":["workspace bootstrap"],"teardown":["workspace archive"]}
+EOF
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "workspace bootstrap"
+EOF
+cat > .codex/hooks.json <<'EOF'
+{"command":"workspace prune --deferred"}
+EOF
+
+run_init
+run_init
+
+assert_true "existing Conductor setup upgraded once" grep -q 'setup = "bin/workspace bootstrap"' .conductor/settings.toml
+assert_true "custom Conductor command preserved" grep -q 'run = "bin/custom-run"' .conductor/settings.toml
+assert_true "extended Workspace command is treated as custom" grep -q '"workspace bootstrap --custom"' .conductor/settings.toml
+assert_false "entrypoint upgrade is idempotent" grep -q 'bin/bin/workspace' .conductor/settings.toml
+assert_true "existing Superconductor config upgraded" grep -q 'bin/workspace run' .superconductor/config.json
+assert_true "existing Superset config upgraded" grep -q 'bin/workspace archive' .superset/config.json
+assert_true "existing Codex environment upgraded" grep -q 'bin/workspace bootstrap' .codex/environments/environment.toml
+assert_true "existing Codex environment gains info action" grep -q 'command = "bin/workspace info"' .codex/environments/environment.toml
+assert_true "existing Codex hook upgraded" grep -q 'bin/workspace prune --deferred' .codex/hooks.json
+
+# TOML permits literal strings. Upgrade exact single-quoted Workspace commands
+# and recognize an existing single-quoted info action without appending another.
+app_dir=$(create_fake_app "init-upgrade-single-quoted-toml")
+cd "$app_dir"
+mkdir -p .conductor .codex/environments
+cat > .conductor/settings.toml <<'EOF'
+[scripts]
+setup = 'workspace bootstrap'
+run = 'workspace run'
+archive = 'bin/custom-archive'
+EOF
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = 'workspace bootstrap'
+
+[[actions]]
+name = 'Workspace info'
+command = 'workspace info'
+EOF
+
+run_init
+
+assert_true "single-quoted Conductor setup upgraded" grep -q "setup = 'bin/workspace bootstrap'" .conductor/settings.toml
+assert_true "single-quoted Conductor run upgraded" grep -q "run = 'bin/workspace run'" .conductor/settings.toml
+assert_true "single-quoted custom command preserved" grep -q "archive = 'bin/custom-archive'" .conductor/settings.toml
+assert_true "single-quoted Codex setup upgraded" grep -q "script = 'bin/workspace bootstrap'" .codex/environments/environment.toml
+assert_true "single-quoted Codex info upgraded" grep -q "command = 'bin/workspace info'" .codex/environments/environment.toml
+info_count=$(grep -c 'bin/workspace info' .codex/environments/environment.toml)
+assert_equal "single-quoted Codex info action is not duplicated" "1" "$info_count"
+
+# ── init: rejects an unrelated bin/workspace before migration ───
+
+app_dir=$(create_fake_app "init-entrypoint-collision")
+cd "$app_dir"
+cat > config/database.yml <<'YAML'
+development:
+  database: collision_development
+YAML
+cat > bin/workspace <<'EOF'
+#!/bin/sh
+echo unrelated
+EOF
+chmod +x bin/workspace
+output="$TEST_TMP/init-entrypoint-collision.out"
+
+assert_false "foreign bin/workspace aborts init" sh "$WORKSPACE_HOME/lib/init.sh" >"$output" 2>&1
+assert_true "collision message is actionable" grep -q 'Remove or rename bin/workspace' "$output"
+assert_true "foreign bin/workspace is preserved" grep -q '^echo unrelated$' bin/workspace
+assert_false "collision aborts before version contract" [ -e .workspace-version ]
+assert_false "collision aborts before provider config generation" [ -e .conductor/settings.toml ]
+assert_false "collision aborts before database patching" grep -q WORKSPACE_DB_SUFFIX config/database.yml
+
+app_dir=$(create_fake_app "init-linked-entrypoint")
+cd "$app_dir"
+entrypoint_sentinel="$TEST_TMP/init-entrypoint-sentinel"
+printf 'sentinel-entrypoint\n' > "$entrypoint_sentinel"
+ln -s "$entrypoint_sentinel" bin/workspace
+output="$TEST_TMP/init-linked-entrypoint.out"
+assert_false "linked bin/workspace aborts init" sh "$WORKSPACE_HOME/lib/init.sh" >"$output" 2>&1
+assert_equal "linked bin/workspace target is untouched" "sentinel-entrypoint" "$(cat "$entrypoint_sentinel")"
+
+# ── init: preserves linked configs and resists temp-file symlinks ─
+
+app_dir=$(create_fake_app "init-linked-config")
+cd "$app_dir"
+mkdir -p .conductor
+linked_target="$TEST_TMP/shared-conductor.toml"
+printf '[scripts]\nsetup = "workspace bootstrap"\n' > "$linked_target"
+ln -s "$linked_target" .conductor/settings.toml
+run_init
+assert_true "linked provider config remains a symlink" [ -L .conductor/settings.toml ]
+assert_true "linked provider target remains unchanged" grep -q 'setup = "workspace bootstrap"' "$linked_target"
+
+app_dir=$(create_fake_app "init-temp-symlink")
+cd "$app_dir"
+mkdir -p .conductor
+printf '[scripts]\nsetup = "workspace bootstrap"\n' > .conductor/settings.toml
+temp_sentinel="$TEST_TMP/init-temp-sentinel"
+printf 'sentinel\n' > "$temp_sentinel"
+ln -s "$temp_sentinel" .conductor/settings.toml.tmp
+run_init
+assert_equal "predictable temp symlink target is untouched" "sentinel" "$(cat "$temp_sentinel")"
+assert_true "regular provider config is still upgraded" grep -q 'bin/workspace bootstrap' .conductor/settings.toml
+
+app_dir=$(create_fake_app "init-version-symlink")
+cd "$app_dir"
+version_sentinel="$TEST_TMP/init-version-sentinel"
+printf 'sentinel-version\n' > "$version_sentinel"
+ln -s "$version_sentinel" .workspace-version
+output="$TEST_TMP/init-version-symlink.out"
+assert_false "linked version contract aborts init" sh "$WORKSPACE_HOME/lib/init.sh" >"$output" 2>&1
+assert_equal "linked version target is untouched" "sentinel-version" "$(cat "$version_sentinel")"
+
+app_dir=$(create_fake_app "init-gitignore-symlink")
+cd "$app_dir"
+gitignore_sentinel="$TEST_TMP/init-gitignore-sentinel"
+printf 'sentinel-gitignore\n' > "$gitignore_sentinel"
+ln -s "$gitignore_sentinel" .gitignore
+output="$TEST_TMP/init-gitignore-symlink.out"
+assert_false "linked .gitignore aborts init" sh "$WORKSPACE_HOME/lib/init.sh" >"$output" 2>&1
+assert_equal "linked .gitignore target is untouched" "sentinel-gitignore" "$(cat "$gitignore_sentinel")"
 
 # ── init: adds .workspace to .gitignore ─────────────────────────
 
