@@ -20,7 +20,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 resolve_workspace
 sanitize_workspace_name
-prefer_workspace_file
+resolve_workspace_identity
 detect_caddy
 detect_vite
 detect_foreman
@@ -36,7 +36,8 @@ fi
   echo "Usage: workspace run"
   echo ""
   echo "Starts the dev server for a workspace."
-  echo "Ports are derived from CONDUCTOR_PORT or the detected workspace name."
+  echo "Ports use WORKSPACE_PORT or provider-assigned ports, then fall back to"
+  echo "the detected workspace name."
   exit 0
 }
 

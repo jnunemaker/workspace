@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 . ./test_helper.sh
 
 # Clear any env vars from the host environment
-unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH SUPERCONDUCTOR_PORT 2>/dev/null || true
+unset SUPERSET_PORT WORKSPACE_PORT 2>/dev/null || true
 
 # ── Port derivation helper (extracted from run.sh) ───────────────
 
@@ -19,8 +20,23 @@ SUPERSET_WORKSPACE_NAME="some-branch"
 result=$(derive_port)
 assert_equal "CONDUCTOR_PORT takes precedence" "4000" "$result"
 
+# Generic and newer manager variables are honored when provided.
+WORKSPACE_PORT=3900
+SUPERCONDUCTOR_PORT=3950
+SUPERSET_PORT=3975
+result=$(derive_port)
+assert_equal "WORKSPACE_PORT takes precedence over providers" "3900" "$result"
+
+unset WORKSPACE_PORT
+result=$(derive_port)
+assert_equal "SUPERCONDUCTOR_PORT takes precedence" "3950" "$result"
+
+unset SUPERCONDUCTOR_PORT
+result=$(derive_port)
+assert_equal "SUPERSET_PORT is honored" "3975" "$result"
+
 # Superset workspace name derives port
-unset CONDUCTOR_PORT
+unset CONDUCTOR_PORT SUPERSET_PORT
 SUPERSET_WORKSPACE_NAME="my-feature"
 result=$(derive_port)
 assert_true "derived port >= 50000" [ "$result" -ge 50000 ]
@@ -63,11 +79,11 @@ result=$(derive_port)
 assert_true "git worktree named default gets isolated port" [ "$result" -ge 50000 ]
 assert_true "git worktree named default avoids port 3000" [ "$result" -ne 3000 ]
 
-# Conductor without CONDUCTOR_PORT keeps its historical default behavior.
+# Conductor without an assigned port receives a deterministic isolated range.
 WORKSPACE_NAME="conductor-feature"
 WORKSPACE_PROVIDER="conductor"
 result=$(derive_port)
-assert_equal "conductor without port keeps default" "3000" "$result"
+assert_true "conductor without port gets isolated range" [ "$result" -ge 50000 ]
 
 # Port is multiple of 10 (for 10-port block allocation)
 SUPERSET_WORKSPACE_NAME="test-port-alignment"

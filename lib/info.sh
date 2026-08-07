@@ -18,7 +18,7 @@ fi
 
 resolve_workspace
 sanitize_workspace_name
-prefer_workspace_file
+resolve_workspace_identity
 detect_caddy
 detect_vite
 load_dotenv_defaults ./.env
@@ -34,7 +34,7 @@ case "$BASE_PORT" in
 esac
 
 case "$WORKSPACE_PROVIDER" in
-  git) _provider="codex" ;;
+  git) _provider="git" ;;
   "") _provider="default" ;;
   *) _provider="$WORKSPACE_PROVIDER" ;;
 esac
@@ -61,6 +61,7 @@ fi
 
 echo "Provider: $_provider"
 echo "Workspace: $_workspace_name"
+echo "Identity source: $WORKSPACE_IDENTITY_SOURCE"
 echo "Root: $_workspace_root"
 echo "Database suffix: $_workspace_suffix"
 echo "URL: $_workspace_url"

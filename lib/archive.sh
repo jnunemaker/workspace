@@ -26,7 +26,7 @@ if [ "${1:-}" = "--registry-entry" ]; then
 else
   resolve_workspace
   sanitize_workspace_name
-  prefer_workspace_file
+  resolve_workspace_identity
 fi
 
 if [ -n "${WORKSPACE_INVALID_NAME:-}" ] || [ "$WORKSPACE_NAME" = "default" ]; then

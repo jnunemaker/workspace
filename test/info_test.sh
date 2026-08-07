@@ -22,6 +22,7 @@ EOF
 output=$(CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT=4100 sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "info reports Conductor provider" output_has "$output" '^Provider: conductor$'
 assert_true "info reports workspace name" output_has "$output" '^Workspace: feature-info$'
+assert_true "info reports provider-derived identity source" output_has "$output" '^Identity source: derived$'
 assert_true "info reports root" output_has "$output" "^Root: $root_dir$"
 assert_true "info reports database suffix" output_has "$output" '^Database suffix: _feature-info$'
 assert_true "info reports Caddy URL" output_has "$output" '^URL: https://info-conductor.localhost:4100$'
@@ -29,6 +30,13 @@ assert_true "info reports allocated port block" output_has "$output" '^Ports: 41
 assert_true "info reports Rails port" output_has "$output" '^  Rails: 4101$'
 assert_true "info reports Caddy admin port" output_has "$output" '^  Caddy admin: 4102$'
 assert_true "info reports Vite port" output_has "$output" '^  Vite: 4103$'
+
+printf '%s' "existing-database" > .conductor-workspace
+printf '%s' "wrong-workspace" > .workspace
+output=$(SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="renamed-provider" SUPERSET_PORT=4150 sh "$WORKSPACE_HOME/lib/info.sh")
+assert_true "info trusts existing Conductor marker" output_has "$output" '^Workspace: existing-database$'
+assert_true "info reports Conductor marker source" output_has "$output" '^Identity source: .conductor-workspace$'
+assert_true "info uses resolved database suffix" output_has "$output" '^Database suffix: _existing-database$'
 
 app_dir=$(create_fake_app "info-default")
 cd "$app_dir"
@@ -95,7 +103,7 @@ git -C "$git_root" worktree add -q --detach "$git_worktree"
 git_root=$(cd "$git_root" && pwd -P)
 cd "$git_worktree"
 output=$(CODEX_HOME="$codex_home" sh "$WORKSPACE_HOME/lib/info.sh")
-assert_true "Git worktree info uses the Codex provider label" output_has "$output" '^Provider: codex$'
+assert_true "Git worktree info uses the generic provider label" output_has "$output" '^Provider: git$'
 assert_true "Git worktree info reports the main checkout as root" output_has "$output" "^Root: $git_root$"
 
 report "workspace info"

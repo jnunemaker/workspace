@@ -3,8 +3,46 @@
 # Sourced by bootstrap and archive subcommands.
 
 # Patch config/database.yml to support workspace-specific database names.
-# Adds ERB suffixes using WORKSPACE_DB_SUFFIX.
+# Lifecycle commands use WORKSPACE_DB_SUFFIX; ad-hoc Rails commands fall back
+# to the same stable marker precedence used by the lifecycle resolver.
 # Idempotent — skips if already patched.
+install_workspace_suffix_helper() {
+  ruby -e '
+    path = "config/database.yml"
+    content = File.read(path)
+    helper = <<~ERB
+      <%
+        workspace_root = defined?(Rails) && Rails.respond_to?(:root) && Rails.root ? Rails.root : Dir.pwd
+        conductor_identity_path = File.expand_path(".conductor-workspace", workspace_root)
+        workspace_identity_path = File.expand_path(".workspace", workspace_root)
+        if File.symlink?(workspace_identity_path) || (File.exist?(workspace_identity_path) && !File.file?(workspace_identity_path))
+          raise "Invalid non-regular .workspace identity"
+        end
+        workspace_db_suffix = ENV["WORKSPACE_DB_SUFFIX"]
+        identity_path = if File.file?(conductor_identity_path) && File.size?(conductor_identity_path)
+          conductor_identity_path
+        elsif File.file?(workspace_identity_path)
+          workspace_identity_path
+        end
+        if !workspace_db_suffix && identity_path
+          workspace_name = File.read(identity_path).sub(/\n+\z/, "")
+          if workspace_name.empty? || workspace_name == "default" || workspace_name.match?(/[\\r\\n]/)
+            raise "Invalid \#{File.basename(identity_path)} identity"
+          end
+          workspace_db_suffix = "_\#{workspace_name}"
+        end
+        workspace_db_suffix ||= ""
+      %>
+    ERB
+
+    unless content.include?("workspace_identity_path =")
+      content = helper + content
+    end
+    content.gsub!(/<%=\s*ENV\[(["'\'' ])WORKSPACE_DB_SUFFIX\1\]\s*%>/, "<%= workspace_db_suffix %>")
+    File.write(path, content)
+  '
+}
+
 patch_database_yml() {
   local db_yml="config/database.yml"
 
@@ -13,19 +51,33 @@ patch_database_yml() {
     return
   fi
 
-  # Already patched?
-  if grep -q 'WORKSPACE_DB_SUFFIX' "$db_yml" 2>/dev/null; then
+  # Already uses the environment and stable-marker helper.
+  if grep -q 'workspace_identity_path =' "$db_yml" 2>/dev/null; then
     step "database.yml already supports workspace isolation"
+    return
+  fi
+
+  # Upgrade earlier Workspace patches so bare Rails commands use the same DB.
+  if grep -q 'WORKSPACE_DB_SUFFIX' "$db_yml" 2>/dev/null; then
+    step "Adding stable workspace identity fallback to database.yml"
+    install_workspace_suffix_helper || return 1
+    ok "database.yml updated"
     return
   fi
 
   # Inject WORKSPACE_DB_SUFFIX before existing ENV_NUMBER vars
   if grep -q 'DEV_ENV_NUMBER\|TEST_ENV_NUMBER' "$db_yml" 2>/dev/null; then
     step "Adding WORKSPACE_DB_SUFFIX to database.yml (preserving existing env vars)"
-    sed -i '' \
-      -e 's/<%= ENV\["DEV_ENV_NUMBER"\] %>/<%= ENV["WORKSPACE_DB_SUFFIX"] %><%= ENV["DEV_ENV_NUMBER"] %>/g' \
-      -e 's/<%= ENV\["TEST_ENV_NUMBER"\] %>/<%= ENV["WORKSPACE_DB_SUFFIX"] %><%= ENV["TEST_ENV_NUMBER"] %>/g' \
-      "$db_yml"
+    install_workspace_suffix_helper || return 1
+    ruby -e '
+      path = "config/database.yml"
+      content = File.read(path)
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"DEV_ENV_NUMBER\"] || workspace_db_suffix %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"TEST_ENV_NUMBER\"] || workspace_db_suffix %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*%>/, "<%= workspace_db_suffix %><%= ENV[\"DEV_ENV_NUMBER\"] %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*%>/, "<%= workspace_db_suffix %><%= ENV[\"TEST_ENV_NUMBER\"] %>")
+      File.write(path, content)
+    ' || return 1
     ok "database.yml updated"
     return
   fi
@@ -61,7 +113,7 @@ patch_database_yml() {
       # Only patch development and test database lines
       if (env == "development" || env == "test") && !line.include?("<%")
         if m = line.match(/\A(\s+database:\s*)(\S+)\s*$/)
-          result << "#{m[1]}#{m[2]}<%= ENV[\"WORKSPACE_DB_SUFFIX\"] %>\n"
+          result << "#{m[1]}#{m[2]}<%= workspace_db_suffix %>\n"
           next
         end
       end
@@ -70,7 +122,9 @@ patch_database_yml() {
     end
 
     File.write("config/database.yml", result.join)
-  '
+  ' || return 1
+
+  install_workspace_suffix_helper || return 1
 
   ok "database.yml patched"
 }

@@ -36,6 +36,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 resolve_workspace
 sanitize_workspace_name
+resolve_workspace_identity
 detect_app_name
 detect_setup_script
 
@@ -227,7 +228,7 @@ create_workspace_databases
 
 # ── Write .workspace file ────────────────────────────────────────
 
-printf '%s' "$WORKSPACE_NAME" > .workspace
+write_workspace_identity
 ok "Wrote .workspace file"
 
 register_workspace "$(derive_workspace_port "")"

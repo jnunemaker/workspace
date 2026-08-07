@@ -29,12 +29,13 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
 Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next to `myapp`) and it will:
 
-1. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
-2. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
-3. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
-4. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
-5. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
-6. Run the optional seed hook, write `.workspace`, then run the optional bootstrap hook.
+1. Resolve one stable database identity from existing markers, a project hook, provider variables, or Git worktree metadata.
+2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
+3. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
+4. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
+5. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
+6. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
+7. Run the optional seed hook, atomically write `.workspace`, then run the optional bootstrap hook.
 
 The root/default checkout keeps the normal application-development contract:
 `bin/setup` for first setup, `bin/update` after pulls, and `bin/dev` to run.
@@ -52,6 +53,31 @@ It never installs or updates Workspace automatically.
 
 Use `bin/workspace info` to see the provider, workspace name, root path,
 database suffix, application URL, and reserved 10-port block.
+
+## Stable database identity
+
+Every lifecycle command resolves the workspace name in the same order:
+
+1. A non-empty `.conductor-workspace`, for existing Conductor-family projects.
+2. `.workspace`, written by a successful Workspace bootstrap.
+3. Executable `bin/workspace-identity-hook`, for a project with another established identity scheme.
+4. The name supplied by Superconductor, Superset, or Conductor.
+5. The stable Git worktree ID for any linked Git worktree.
+
+The main Git checkout has no worktree ID and remains unsuffixed. Provider names
+are sanitized when needed before they become defaults. Superset retains its
+historical 45-character identity limit; Superconductor and generic Git
+worktrees use 40 characters. Existing identity files and hook output are
+validated but never silently rewritten or truncated. This keeps `bootstrap`,
+`run`, `info`, `archive`, and ad-hoc Rails commands on the same database after
+a provider display-name, directory, or branch rename.
+
+An identity hook prints the established workspace name without the leading
+underscore. It may print nothing to defer to provider/Git detection. Workspace
+exports `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and the detected
+`WORKSPACE_NAME` while invoking it. Once either marker exists, the hook is not
+called. A non-empty `.conductor-workspace` remains authoritative for the
+worktree until the project removes it.
 
 ## Codex worktrees
 
@@ -77,11 +103,10 @@ Codex when starting a worktree chat. Review and trust the project hook when
 Codex prompts; untrusted command hooks are skipped.
 
 Codex-managed worktrees do not provide the Conductor-style root/name variables.
-`workspace` recognizes linked worktrees under `$CODEX_HOME/worktrees` (default
-`~/.codex/worktrees`) and reads their identity through Git's shared metadata,
-including after a branch is attached. Worktrees created elsewhere retain their
-existing behavior. Superconductor, Superset, and Conductor variables always
-take precedence.
+`workspace` recognizes every linked Git worktree and reads its stable identity
+and root through Git's shared metadata, including after a branch is attached.
+Superconductor, Superset, and Conductor variables always take precedence over
+Git detection.
 
 Cleanup registrations live under the repository's shared Git directory at
 `.git/workspace/registry/`, so they survive deletion of the disposable
@@ -94,6 +119,7 @@ Place any of these in your project's `bin/` directory to customize the workspace
 
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
+| `bin/workspace-identity-hook` | Before lifecycle work when neither identity marker exists; print an established workspace name without the `_` prefix | Executed; empty output defers to provider/Git defaults |
 | `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; use it to materialize `config/database.yml` locally | Executed |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
@@ -137,12 +163,15 @@ To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_C
 ## Environment
 
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
+- `WORKSPACE_PORT` — optional provider-neutral base-port override
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
 - `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
 - `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
 - `WORKSPACE_APP_URL` — set by `bin/workspace-run-hook` to override the URL displayed before Foreman starts
 
 `workspace run` loads the linked `.env` as defaults before sourcing the run hook. Values already exported by the workspace manager, and values exported by the hook, take precedence. Keep `.env` shell-compatible because the CLI sources it with `/bin/sh`.
+Workspace honors `SUPERCONDUCTOR_PORT`, `SUPERSET_PORT`, and `CONDUCTOR_PORT`
+when supplied; otherwise named worktrees receive a deterministic 10-port block.
 
 ## Tests
 
