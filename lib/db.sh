@@ -18,6 +18,9 @@ install_workspace_suffix_helper() {
         if File.symlink?(workspace_identity_path) || (File.exist?(workspace_identity_path) && !File.file?(workspace_identity_path))
           raise "Invalid non-regular .workspace identity"
         end
+        if File.exist?(conductor_identity_path) && !File.file?(conductor_identity_path)
+          raise "Invalid non-regular .conductor-workspace identity"
+        end
         workspace_db_suffix = ENV["WORKSPACE_DB_SUFFIX"]
         identity_path = if File.file?(conductor_identity_path) && File.size?(conductor_identity_path)
           conductor_identity_path

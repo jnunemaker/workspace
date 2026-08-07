@@ -72,8 +72,7 @@ development:
 YAML
 
 patch_database_yml 2>/dev/null
-content=$(cat config/database.yml)
-assert_true "DB_SUFFIX treated as already patched" echo "$content" | grep -q 'DB_SUFFIX'
+assert_true "DB_SUFFIX treated as already patched" grep -q 'DB_SUFFIX' config/database.yml
 
 # ── patch_database_yml: no database.yml ──────────────────────────
 
@@ -167,6 +166,11 @@ YAML
   rm .workspace
   mkdir .workspace
   assert_false "directory Workspace marker fails ad-hoc database config" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+
+  rmdir .workspace
+  printf '%s' "workspace-fallback" > .workspace
+  mkdir .conductor-workspace
+  assert_false "directory Conductor marker fails instead of falling back" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
 fi
 
 # ── create_workspace_databases: runs bin/workspace-seed ──────────

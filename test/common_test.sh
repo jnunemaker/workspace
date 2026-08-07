@@ -221,6 +221,12 @@ assert_false "directory .workspace is rejected during resolution" resolve_worksp
 assert_false "directory .workspace is rejected during persistence" write_workspace_identity
 assert_equal "directory .workspace remains empty" "" "$(find .workspace -mindepth 1 -maxdepth 1 -print)"
 
+mkdir -p "$TEST_TMP/directory-conductor" && cd "$TEST_TMP/directory-conductor"
+mkdir .conductor-workspace
+printf '%s' "workspace-fallback" > .workspace
+WORKSPACE_NAME="from-env"
+assert_false "directory .conductor-workspace is rejected during resolution" resolve_workspace_identity
+
 # A matching marker produces no warning.
 mkdir -p "$TEST_TMP/match" && cd "$TEST_TMP/match"
 printf '%s' "atlanta" > .workspace

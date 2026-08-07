@@ -163,6 +163,10 @@ resolve_workspace_identity() {
     err "Refusing to use non-regular workspace identity: .workspace"
     return 1
   fi
+  if [ -e .conductor-workspace ] && [ ! -f .conductor-workspace ]; then
+    err "Refusing to use non-regular workspace identity: .conductor-workspace"
+    return 1
+  fi
 
   # An empty legacy marker historically meant "not pinned yet," so it may
   # defer to Workspace. An empty .workspace is corruption and fails closed.
