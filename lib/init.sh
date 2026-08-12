@@ -182,7 +182,7 @@ _upgrade_codex_cleanup_table() {
       sub(/^[[:space:]]*script[[:space:]]*=[[:space:]]*/, "", value)
       sub(/[[:space:]]*$/, "", value)
       if (value == "\"bin/workspace archive\"" || value == "\047bin/workspace archive\047" ||
-          value ~ /^\"bin\/workspace archive\"[[:space:]]*#/ ||
+          value ~ /^"bin\/workspace archive"[[:space:]]*#/ ||
           value ~ /^\047bin\/workspace archive\047[[:space:]]*#/) {
         print ENVIRON["CODEX_CLEANUP_TOML_LINE"]
         next
