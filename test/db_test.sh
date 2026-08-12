@@ -21,7 +21,7 @@ YAML
 
 patch_database_yml 2>/dev/null
 assert_true "earlier patch gains stable marker fallback" grep -q 'workspace_identity_path =' config/database.yml
-assert_true "earlier suffix expression uses shared helper" grep -q 'myapp_development<%= workspace_db_suffix %>' config/database.yml
+assert_true "earlier suffix expression uses quoted database helper" grep -q 'workspace_database_name.call("myapp_development")' config/database.yml
 
 # ── patch_database_yml: injects before legacy env vars ──────────
 
@@ -40,8 +40,8 @@ patch_database_yml 2>/dev/null
 assert_true "stable suffix helper injected" grep -q 'workspace_identity_path =' config/database.yml
 assert_true "DEV_ENV_NUMBER preserved" grep -q 'DEV_ENV_NUMBER' config/database.yml
 assert_true "TEST_ENV_NUMBER preserved" grep -q 'TEST_ENV_NUMBER' config/database.yml
-assert_true "dev: suffix before env number" grep -q 'workspace_db_suffix.*DEV_ENV_NUMBER' config/database.yml
-assert_true "test: suffix before env number" grep -q 'workspace_db_suffix.*TEST_ENV_NUMBER' config/database.yml
+assert_true "dev: suffix and env number use quoted database helper" grep -q 'workspace_database_name.call.*DEV_ENV_NUMBER' config/database.yml
+assert_true "test: suffix and env number use quoted database helper" grep -q 'workspace_database_name.call.*TEST_ENV_NUMBER' config/database.yml
 
 # Existing fallback expressions (used by projects with legacy marker logic)
 # are redirected to the shared stable suffix without double-appending it.
@@ -58,8 +58,8 @@ test:
 YAML
 
 patch_database_yml 2>/dev/null
-assert_true "legacy dev fallback uses stable suffix helper" grep -q 'DEV_ENV_NUMBER.*|| workspace_db_suffix' config/database.yml
-assert_true "legacy test fallback uses stable suffix helper" grep -q 'TEST_ENV_NUMBER.*|| workspace_db_suffix' config/database.yml
+assert_true "legacy dev fallback uses stable suffix helper" grep -q 'workspace_database_name.call.*DEV_ENV_NUMBER.*|| workspace_db_suffix' config/database.yml
+assert_true "legacy test fallback uses stable suffix helper" grep -q 'workspace_database_name.call.*TEST_ENV_NUMBER.*|| workspace_db_suffix' config/database.yml
 assert_false "legacy fallback is not double-appended" grep -q 'workspace_db_suffix.*DEV_ENV_NUMBER.*workspace_db_suffix' config/database.yml
 
 # ── patch_database_yml: already has DB_SUFFIX ────────────────────
@@ -119,58 +119,99 @@ YAML
   content=$(cat config/database.yml)
 
   # All dev+test databases should use the shared suffix helper.
-  suffix_count=$(echo "$content" | grep -c 'database:.*workspace_db_suffix' || true)
+  suffix_count=$(echo "$content" | grep -c 'database:.*workspace_database_name.call' || true)
   assert_equal "all dev+test databases patched (4 entries)" "4" "$suffix_count"
 
   # Production should NOT be touched
-  prod_lines=$(echo "$content" | grep 'production' | grep 'workspace_db_suffix' || true)
+  prod_lines=$(echo "$content" | grep 'production' | grep 'workspace_database_name.call' || true)
   assert_equal "production not patched" "" "$prod_lines"
 
   # Specific line checks
-  dev_match=$(echo "$content" | grep 'myapp_development<%= workspace_db_suffix %>' || true)
+  dev_match=$(echo "$content" | grep 'workspace_database_name.call("myapp_development")' || true)
   assert_true "dev primary patched" [ -n "$dev_match" ]
-  test_match=$(echo "$content" | grep 'myapp_test<%= workspace_db_suffix %>' || true)
+  test_match=$(echo "$content" | grep 'workspace_database_name.call("myapp_test")' || true)
   assert_true "test primary patched" [ -n "$test_match" ]
 
   # Bare Rails commands use the stable marker; lifecycle env still overrides.
   printf '%s' "stable-name" > .workspace
-  rendered=$(ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  rendered=$(CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
   rendered_path="$TEST_TMP/rendered-database.yml"
   printf '%s' "$rendered" > "$rendered_path"
-  assert_true "ad-hoc config uses stable marker" grep -q 'database: myapp_development_stable-name' "$rendered_path"
+  assert_true "ad-hoc config uses stable marker" grep -q 'database: "myapp_development_stable-name"' "$rendered_path"
 
   printf '%s' "legacy-conductor-name" > .conductor-workspace
   printf '%s' "stale-workspace-name" > .workspace
-  rendered=$(ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  rendered=$(CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
   printf '%s' "$rendered" > "$rendered_path"
-  assert_true "Conductor marker overrides stale Workspace marker" grep -q 'database: myapp_development_legacy-conductor-name' "$rendered_path"
+  assert_true "Conductor marker overrides stale Workspace marker" grep -q 'database: "myapp_development_legacy-conductor-name"' "$rendered_path"
 
   rm .workspace
-  rendered=$(ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  rendered=$(CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
   printf '%s' "$rendered" > "$rendered_path"
-  assert_true "ad-hoc config uses Conductor-only marker" grep -q 'database: myapp_development_legacy-conductor-name' "$rendered_path"
+  assert_true "ad-hoc config uses Conductor-only marker" grep -q 'database: "myapp_development_legacy-conductor-name"' "$rendered_path"
 
-  rendered=$(WORKSPACE_DB_SUFFIX="_from-env" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  rendered=$(WORKSPACE_DB_SUFFIX="_from-env" CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
   printf '%s' "$rendered" > "$rendered_path"
-  assert_true "lifecycle suffix overrides stable marker" grep -q 'database: myapp_development_from-env' "$rendered_path"
+  assert_true "lifecycle suffix overrides stable marker" grep -q 'database: "myapp_development_from-env"' "$rendered_path"
 
   rm .conductor-workspace
   printf 'first\nsecond\n' > .workspace
-  assert_false "invalid marker fails ad-hoc database config" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+  assert_false "invalid marker fails ad-hoc database config" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
 
   rm .workspace
   printf '%s' "linked-name" > workspace-identity-target
   ln -s workspace-identity-target .workspace
-  assert_false "linked Workspace marker fails ad-hoc database config" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+  assert_false "linked Workspace marker fails ad-hoc database config" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
 
   rm .workspace
   mkdir .workspace
-  assert_false "directory Workspace marker fails ad-hoc database config" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+  assert_false "directory Workspace marker fails ad-hoc database config" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
 
   rmdir .workspace
   printf '%s' "workspace-fallback" > .workspace
   mkdir .conductor-workspace
-  assert_false "directory Conductor marker fails instead of falling back" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+  assert_false "directory Conductor marker fails instead of falling back" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+
+  rmdir .conductor-workspace
+  printf '%s' "linked-conductor-name" > conductor-identity-target
+  ln -s conductor-identity-target .conductor-workspace
+  assert_false "linked Conductor marker fails ad-hoc database config" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+
+  rm .conductor-workspace
+  printf '%s' "stale-root-name" > .workspace
+  rendered=$(CONDUCTOR_ROOT_PATH="$app_dir" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  printf '%s' "$rendered" > "$rendered_path"
+  assert_true "root Rails commands ignore stale workspace markers" grep -q 'database: "myapp_development"' "$rendered_path"
+
+  printf 'bad\tidentity' > .workspace
+  assert_false "control characters fail ad-hoc database config" env CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'ERB.new(File.read("config/database.yml")).result' >/dev/null 2>&1
+
+  printf '%s' "feature #one" > .workspace
+  rendered=$(CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  printf '%s' "$rendered" > "$rendered_path"
+  parsed_database=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("development").fetch("primary").fetch("database")' "$rendered_path")
+  assert_equal "YAML metacharacters remain part of the database name" "myapp_development_feature #one" "$parsed_database"
+
+  printf '%s' "feature #two" > .workspace
+  rendered=$(CONDUCTOR_ROOT_PATH="$TEST_TMP/root-checkout" CONDUCTOR_WORKSPACE_NAME="provider-name" ruby -rerb -e 'print ERB.new(File.read("config/database.yml")).result')
+  printf '%s' "$rendered" > "$rendered_path"
+  parsed_database=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("development").fetch("primary").fetch("database")' "$rendered_path")
+  assert_equal "distinct YAML metacharacter identities stay distinct" "myapp_development_feature #two" "$parsed_database"
+
+  # Atomic replacement must leave the live file unchanged if a same-directory
+  # temporary file cannot be created.
+  app_dir=$(create_fake_app "atomic-patch-failure")
+  cd "$app_dir"
+  cat > config/database.yml <<'YAML'
+development:
+  database: myapp_development<%= ENV["WORKSPACE_DB_SUFFIX"] %>
+YAML
+  atomic_original="$TEST_TMP/atomic-database-original.yml"
+  cp config/database.yml "$atomic_original"
+  chmod 555 config
+  assert_false "failed atomic patch reports failure" patch_database_yml >/dev/null 2>&1
+  chmod 755 config
+  assert_true "failed atomic patch preserves live database config" cmp -s "$atomic_original" config/database.yml
 fi
 
 # ── create_workspace_databases: runs bin/workspace-seed ──────────

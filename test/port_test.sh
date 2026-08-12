@@ -14,6 +14,10 @@ derive_port() {
   derive_workspace_port "3000"
 }
 
+resolve_port() {
+  resolve_workspace_port "3000"
+}
+
 # CONDUCTOR_PORT takes precedence
 CONDUCTOR_PORT=4000
 SUPERSET_WORKSPACE_NAME="some-branch"
@@ -92,6 +96,22 @@ WORKSPACE_PROVIDER="superset"
 result=$(derive_port)
 remainder=$((result % 10))
 assert_equal "port is multiple of 10" "0" "$remainder"
+
+# The entire 10-port block must fit in the TCP range before registration or
+# arithmetic. Valid inputs are normalized to decimal.
+unset SUPERCONDUCTOR_PORT SUPERSET_PORT CONDUCTOR_PORT
+WORKSPACE_PORT=65526
+assert_equal "highest valid explicit base is accepted" "65526" "$(resolve_port)"
+WORKSPACE_PORT=00008
+assert_equal "explicit base is normalized to decimal" "8" "$(resolve_port)"
+WORKSPACE_PORT=0
+assert_false "zero base is rejected" resolve_port >/dev/null 2>&1
+WORKSPACE_PORT=65535
+assert_false "overflowing explicit block is rejected" resolve_port >/dev/null 2>&1
+unset WORKSPACE_PORT
+CONDUCTOR_PORT=65535
+assert_false "overflowing provider block is rejected" resolve_port >/dev/null 2>&1
+unset CONDUCTOR_PORT
 
 # ── Port export logic (caddy vs non-caddy) ───────────────────────
 

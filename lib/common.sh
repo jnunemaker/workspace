@@ -135,9 +135,10 @@ validate_workspace_identity() {
     err "$_identity_source must contain exactly one workspace name"
     return 1
   fi
-  case "$_identity_value" in
-    *"$(printf '\r')"*) err "$_identity_source contains an invalid carriage return"; return 1 ;;
-  esac
+  if printf '%s' "$_identity_value" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    err "$_identity_source contains an invalid control character"
+    return 1
+  fi
 }
 
 read_workspace_identity_file() {
@@ -156,6 +157,13 @@ resolve_workspace_identity() {
   _derived_workspace_name="$WORKSPACE_NAME"
   WORKSPACE_IDENTITY_SOURCE="derived"
 
+  # Provider and Git discovery decide whether this is the root checkout. A
+  # stable marker or adoption hook must never turn that default checkout into
+  # an isolated workspace after discovery has selected the root path.
+  if is_default_workspace && [ -z "${WORKSPACE_INVALID_NAME:-}" ]; then
+    return 0
+  fi
+
   # Bootstrap must be able to replace the stable marker atomically. Reject a
   # directory, symlink, or other non-regular node before setup or database work
   # begins instead of discovering it only when the final rename runs.
@@ -163,7 +171,7 @@ resolve_workspace_identity() {
     err "Refusing to use non-regular workspace identity: .workspace"
     return 1
   fi
-  if [ -e .conductor-workspace ] && [ ! -f .conductor-workspace ]; then
+  if [ -L .conductor-workspace ] || { [ -e .conductor-workspace ] && [ ! -f .conductor-workspace ]; }; then
     err "Refusing to use non-regular workspace identity: .conductor-workspace"
     return 1
   fi
@@ -266,12 +274,40 @@ load_dotenv_defaults() {
   eval "$_dotenv_existing_exports"
 }
 
-# Print the base port for the current provider. Manager-assigned ports win;
+# Validate and normalize a base port whose inclusive 10-port block must fit in
+# the TCP range. Normalizing leading zeroes keeps shell arithmetic decimal.
+validate_workspace_port_block() {
+  _workspace_port="$1"
+  case "$_workspace_port" in
+    ""|*[!0-9]*)
+      err "Port must be a number, got '$_workspace_port'"
+      return 1
+      ;;
+  esac
+
+  _workspace_port=$(printf '%s' "$_workspace_port" | sed 's/^0*//')
+  [ -n "$_workspace_port" ] || _workspace_port=0
+  if [ "${#_workspace_port}" -gt 5 ] || \
+    [ "$_workspace_port" -lt 1 ] || [ "$_workspace_port" -gt 65526 ]; then
+    err "Port block must fit within 1-65535, got base '$_workspace_port'"
+    return 1
+  fi
+
+  printf '%s\n' "$_workspace_port"
+}
+
+# Print the base port for the current provider. An explicit Workspace override
+# wins, followed by a registered Git reservation and manager-assigned ports;
 # otherwise named worktrees receive deterministic 10-port blocks.
 derive_workspace_port() {
   _default_port="$1"
   _provider_port="${SUPERCONDUCTOR_PORT:-${SUPERSET_PORT:-${CONDUCTOR_PORT:-}}}"
   _port_name="${WORKSPACE_NAME:-${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-${CONDUCTOR_WORKSPACE_NAME:-}}}}"
+  if [ -n "${WORKSPACE_PORT:-}" ]; then
+    printf '%s\n' "$WORKSPACE_PORT"
+    return
+  fi
+
   if [ "$WORKSPACE_PROVIDER" = "git" ]; then
     if command -v registered_workspace_port >/dev/null 2>&1; then
       _registered_port=$(registered_workspace_port 2>/dev/null || true)
@@ -282,9 +318,7 @@ derive_workspace_port() {
     fi
   fi
 
-  if [ -n "${WORKSPACE_PORT:-}" ]; then
-    printf '%s\n' "$WORKSPACE_PORT"
-  elif [ -n "$_provider_port" ]; then
+  if [ -n "$_provider_port" ]; then
     printf '%s\n' "$_provider_port"
   elif [ -n "$_port_name" ] && \
     { [ "$_port_name" != "default" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; }; then
@@ -293,6 +327,11 @@ derive_workspace_port() {
   else
     printf '%s\n' "$_default_port"
   fi
+}
+
+resolve_workspace_port() {
+  _resolved_workspace_port=$(derive_workspace_port "$1") || return 1
+  validate_workspace_port_block "$_resolved_workspace_port"
 }
 
 # ── App name detection ─────────────────────────────────────────────

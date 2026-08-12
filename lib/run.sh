@@ -3,9 +3,10 @@
 #
 # Flow:
 #   1. Resolve workspace name and root path
-#   2. Derive ports (CONDUCTOR_PORT, or hash of workspace name, or default)
-#   3. Export port and DB env vars
-#   4. Load linked .env defaults without overriding exported manager values
+#   2. Load linked .env defaults without overriding provider environment
+#   3. Resolve ports from WORKSPACE_PORT, Git registration, provider input,
+#      or the deterministic/default fallback
+#   4. Export port and DB env vars
 #   5. Sweep ports (kill stale processes)
 #   6. Source bin/workspace-run-hook if it exists
 #   7. Display the hook-provided application URL or the generic fallback
@@ -24,6 +25,11 @@ resolve_workspace_identity
 detect_caddy
 detect_vite
 detect_foreman
+
+# Foreman's env-file values override its parent environment. Load the linked
+# dotenv here instead, restoring values already exported by the manager. This
+# also makes a dotenv WORKSPACE_PORT visible before Git port registration.
+load_dotenv_defaults ./.env
 
 if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   err "Workspace name cannot produce a safe isolated database suffix"
@@ -51,7 +57,8 @@ fi
 # A Codex run may be invoked before setup completes. Publish a collision-free
 # port reservation before sweeping or starting any processes.
 if [ "$WORKSPACE_PROVIDER" = "git" ]; then
-  register_workspace "$(derive_workspace_port "3000")" || {
+  _requested_port=$(resolve_workspace_port "3000") || exit 1
+  register_workspace "$_requested_port" || {
     err "Could not reserve workspace ports"
     exit 1
   }
@@ -60,12 +67,7 @@ fi
 # ── Port derivation ──────────────────────────────────────────────
 
 # Priority and legacy defaults are centralized in common.sh.
-BASE_PORT=$(derive_workspace_port "3000")
-
-# Validate port is numeric
-case "$BASE_PORT" in
-  *[!0-9]*) err "Port must be a number, got '$BASE_PORT'"; exit 1 ;;
-esac
+BASE_PORT=$(resolve_workspace_port "3000") || exit 1
 
 # ── Export ports ─────────────────────────────────────────────────
 
@@ -94,12 +96,7 @@ else
   unset WORKSPACE_DB_SUFFIX
 fi
 
-# ── Dotenv defaults ──────────────────────────────────────────────
-
-# Foreman's env-file values override its parent environment. Load the linked
-# dotenv here instead, restoring values already exported by the manager; the
-# sourced run hook below can then deliberately override either set.
-load_dotenv_defaults ./.env
+# A sourced run hook below can deliberately override manager or dotenv values.
 if is_default_workspace; then
   unset WORKSPACE_DB_SUFFIX
 fi

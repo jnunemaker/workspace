@@ -28,10 +28,7 @@ if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   exit 1
 fi
 
-BASE_PORT=$(derive_workspace_port "3000")
-case "$BASE_PORT" in
-  *[!0-9]*) err "Port must be a number, got '$BASE_PORT'"; exit 1 ;;
-esac
+BASE_PORT=$(resolve_workspace_port "3000") || exit 1
 
 case "$WORKSPACE_PROVIDER" in
   git) _provider="git" ;;

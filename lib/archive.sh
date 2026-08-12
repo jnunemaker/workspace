@@ -53,12 +53,22 @@ fi
 
 header "Archiving workspace: $WORKSPACE_NAME"
 
+# Match run and info when a non-Git provider stores WORKSPACE_PORT in the
+# linked dotenv file. Registry-entry cleanup still uses its recorded port.
+load_dotenv_defaults ./.env
+
 # ── Port derivation (same logic as run) ──────────────────────────
 
 if [ -n "${WORKSPACE_REGISTERED_PORT:-}" ]; then
-  BASE_PORT="$WORKSPACE_REGISTERED_PORT"
+  if ! BASE_PORT=$(validate_workspace_port_block "$WORKSPACE_REGISTERED_PORT"); then
+    warn "Skipping invalid registered port block"
+    BASE_PORT=""
+  fi
 else
-  BASE_PORT=$(derive_workspace_port "")
+  if ! BASE_PORT=$(resolve_workspace_port ""); then
+    warn "Skipping invalid workspace port block"
+    BASE_PORT=""
+  fi
 fi
 
 # ── Run archive hook (before DB drop — hook may need Rails) ──────
@@ -71,21 +81,16 @@ fi
 # ── Sweep ports ──────────────────────────────────────────────────
 
 if [ -n "$BASE_PORT" ]; then
-  case "$BASE_PORT" in
-    *[!0-9]*) step "Port is not numeric ('$BASE_PORT') — skipping port sweep" ;;
-    *)
-      step "Sweeping ports $BASE_PORT-$((BASE_PORT + 9))"
-      for offset in $(seq 0 9); do
-        port=$((BASE_PORT + offset))
-        pids=$(lsof -ti :"$port" 2>/dev/null || true)
-        if [ -n "$pids" ]; then
-          detail "Killing process on port $port"
-          kill $pids 2>/dev/null || true
-        fi
-      done
-      ok "Ports cleared"
-      ;;
-  esac
+  step "Sweeping ports $BASE_PORT-$((BASE_PORT + 9))"
+  for offset in $(seq 0 9); do
+    port=$((BASE_PORT + offset))
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      detail "Killing process on port $port"
+      kill $pids 2>/dev/null || true
+    fi
+  done
+  ok "Ports cleared"
 fi
 
 # ── Drop workspace databases ────────────────────────────────────

@@ -206,6 +206,24 @@ WORKSPACE_NAME="from-env"
 resolve_workspace_identity
 assert_equal "no file leaves name alone" "from-env" "$WORKSPACE_NAME"
 
+# Provider/Git discovery owns the root/default decision. Stale sibling markers
+# and an adoption hook cannot turn the main checkout into an isolated one.
+mkdir -p "$TEST_TMP/root-identity/bin" && cd "$TEST_TMP/root-identity"
+printf '%s' "legacy-sibling" > .conductor-workspace
+printf '%s' "workspace-sibling" > .workspace
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+touch .identity-hook-called
+printf '%s' "hook-sibling"
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME=""
+WORKSPACE_INVALID_NAME=""
+resolve_workspace_identity
+assert_equal "root ignores stable workspace markers" "" "$WORKSPACE_NAME"
+assert_equal "root identity remains derived" "derived" "$WORKSPACE_IDENTITY_SOURCE"
+assert_false "root identity bypasses adoption hook" [ -f .identity-hook-called ]
+
 # An empty Workspace marker is invalid rather than silently re-keying.
 mkdir -p "$TEST_TMP/empty-workspace" && cd "$TEST_TMP/empty-workspace"
 : > .workspace
@@ -226,6 +244,13 @@ mkdir .conductor-workspace
 printf '%s' "workspace-fallback" > .workspace
 WORKSPACE_NAME="from-env"
 assert_false "directory .conductor-workspace is rejected during resolution" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/linked-conductor" && cd "$TEST_TMP/linked-conductor"
+printf '%s' "linked-conductor-name" > conductor-identity-target
+ln -s conductor-identity-target .conductor-workspace
+printf '%s' "workspace-fallback" > .workspace
+WORKSPACE_NAME="from-env"
+assert_false "linked .conductor-workspace is rejected during resolution" resolve_workspace_identity
 
 # A matching marker produces no warning.
 mkdir -p "$TEST_TMP/match" && cd "$TEST_TMP/match"
@@ -284,6 +309,22 @@ mkdir -p "$TEST_TMP/multiline-identity" && cd "$TEST_TMP/multiline-identity"
 printf 'first\nsecond\n' > .workspace
 WORKSPACE_NAME="provider-value"
 assert_false "multiline .workspace is rejected" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/control-identity" && cd "$TEST_TMP/control-identity"
+printf 'bad\tidentity' > .workspace
+WORKSPACE_NAME="provider-value"
+assert_false "control characters in .workspace are rejected" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/control-identity-hook/bin" && cd "$TEST_TMP/control-identity-hook"
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'bad\033identity'
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME="provider-value"
+WORKSPACE_PROVIDER="conductor"
+WORKSPACE_ROOT_PATH="/provider/root"
+assert_false "control characters in identity hook output are rejected" resolve_workspace_identity
 
 mkdir -p "$TEST_TMP/failing-identity-hook/bin" && cd "$TEST_TMP/failing-identity-hook"
 cat > bin/workspace-identity-hook <<'SCRIPT'

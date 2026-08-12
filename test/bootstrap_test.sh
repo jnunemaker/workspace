@@ -404,9 +404,16 @@ cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 touch .rails-called
 SCRIPT
-chmod +x bin/setup bin/workspace-setup-hook bin/update bin/rails
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+touch .identity-hook-called
+printf '%s' "must-not-isolate-root"
+SCRIPT
+chmod +x bin/setup bin/workspace-setup-hook bin/update bin/rails bin/workspace-identity-hook
 assert_true "manager default remains a root setup" run_bootstrap "$root_dir" "default" "$log"
 assert_equal "root setup has no isolated suffix" "root-setup:unset" "$(cat "$log")"
+assert_false "root setup ignores identity hook" [ -f .identity-hook-called ]
+assert_false "root setup does not persist isolated identity" [ -e .workspace ]
 assert_false "root setup does not prepare isolated databases" [ -f .rails-called ]
 assert_false "root setup ignores managed workspace setup hook" [ -f .workspace-setup-called ]
 assert_false "root setup never invokes bin/update" [ -f .update-called ]

@@ -6,7 +6,7 @@
 #   2. If default/main branch: run the app's ordinary setup script and exit
 #   3. Sanitize workspace name (superset names only)
 #   4. Symlink shared files from root
-#   5. Export WORKSPACE_DB_SUFFIX
+#   5. Export WORKSPACE_DB_SUFFIX and reserve ports
 #   6. Materialize and patch database.yml when possible
 #   7. Run bin/workspace-setup-hook, or fall back to the app setup script
 #      when the dedicated hook is absent, then patch generated config
@@ -196,6 +196,17 @@ fi
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
+# Validate port input before project hooks or database work. Git bootstraps
+# already hold the registry lock, so selecting the collision-free block here
+# reserves it without publishing a record for a bootstrap that later fails.
+_workspace_port=$(resolve_workspace_port "") || exit 1
+if [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  _workspace_port=$(select_available_workspace_port "$_workspace_port") || {
+    err "Could not reserve workspace ports"
+    exit 1
+  }
+fi
+
 # ── Materialize and patch DB config before project setup ─────────
 
 # Some projects generate config/database.yml locally. They can do that here so
@@ -231,7 +242,7 @@ create_workspace_databases
 write_workspace_identity
 ok "Wrote .workspace file"
 
-register_workspace "$(derive_workspace_port "")"
+register_workspace "$_workspace_port"
 
 # ── Run bootstrap hook ───────────────────────────────────────────
 
