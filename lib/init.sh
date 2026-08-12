@@ -125,19 +125,29 @@ _codex_environment_is_workspace_managed() {
 _codex_cleanup_is_configured() {
   _configured_codex_environment="$1"
   ruby -e '
+    cleanup_key = lambda do |value|
+      ["cleanup", %q{"cleanup"}, 39.chr + "cleanup" + 39.chr].any? do |key|
+        next false unless value.start_with?(key)
+
+        remainder = value[key.length..].lstrip
+        remainder.empty? || remainder.start_with?(".")
+      end
+    end
+
     inside_table = false
     File.foreach(ARGV.fetch(0)) do |line|
-      value = line.sub(/[ \t]*#.*$/, "").strip
-      key = /(?:cleanup|"cleanup"|\047cleanup\047)/
+      value = line.split("#", 2).first.strip
       if value.start_with?("[") && value.end_with?("]")
         unless value.start_with?("[[") || value[-2, 2] == "]]"
           table_name = value[1...-1].strip
-          exit 0 if table_name.match?(/\A#{key}(?:[ \t]*\..+)?\z/)
+          exit 0 if cleanup_key.call(table_name)
         end
         inside_table = true
         next
       end
-      exit 0 if !inside_table && value.match?(/\A#{key}[ \t]*(?:\.|=)/)
+
+      root_key = value.split("=", 2).first.to_s.strip
+      exit 0 if !inside_table && cleanup_key.call(root_key)
     end
     exit 1
   ' "$_configured_codex_environment"
