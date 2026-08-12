@@ -108,6 +108,119 @@ EOF
   _finish_atomic_write "$_codex_temporary" "$_codex_environment" 644
 }
 
+# Current Codex runs cleanup inside the disposable worktree, but unlike setup
+# it does not export CODEX_WORKTREE_PATH. Prefer the variable when a Codex
+# version supplies it; otherwise accept the current checkout only when Git
+# proves it is a linked worktree. Paths locate the checkout only. Archive still
+# resolves its stable database identity from provider state, markers, hooks,
+# and Git metadata.
+_CODEX_CLEANUP_TOML_LINE_LEGACY_PATH_REQUIRED='script = "if [ -z \"${CODEX_WORKTREE_PATH:-}\" ]; then echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not set\" >&2; exit 1; fi; if [ ! -d \"$CODEX_WORKTREE_PATH\" ]; then echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not a directory: $CODEX_WORKTREE_PATH\" >&2; exit 1; fi; cd \"$CODEX_WORKTREE_PATH\" || exit 1; if [ ! -x bin/workspace ]; then echo \"Workspace cleanup: bin/workspace is missing or not executable in $CODEX_WORKTREE_PATH\" >&2; exit 1; fi; exec bin/workspace archive"'
+_CODEX_CLEANUP_TOML_LINE='script = "if [ -n \"${CODEX_WORKTREE_PATH:-}\" ]; then workspace_cleanup_path=$CODEX_WORKTREE_PATH; else workspace_cleanup_path=$(git rev-parse --show-toplevel 2>/dev/null) || { echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not set and the current directory is not a Git worktree\" >&2; exit 1; }; if [ ! -f \"$workspace_cleanup_path/.git\" ]; then echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not set and cleanup is not running inside a linked Git worktree: $workspace_cleanup_path\" >&2; exit 1; fi; fi; if [ ! -d \"$workspace_cleanup_path\" ]; then echo \"Workspace cleanup: worktree path is not a directory: $workspace_cleanup_path\" >&2; exit 1; fi; cd \"$workspace_cleanup_path\" || exit 1; if [ ! -x bin/workspace ]; then echo \"Workspace cleanup: bin/workspace is missing or not executable in $workspace_cleanup_path\" >&2; exit 1; fi; exec bin/workspace archive"'
+
+_codex_environment_is_workspace_managed() {
+  _managed_codex_environment="$1"
+  grep -Eq "(script|command) = [\"'](bin/)?workspace (bootstrap|run|info|archive)[\"']" "$_managed_codex_environment"
+}
+
+_codex_cleanup_is_configured() {
+  _configured_codex_environment="$1"
+  ruby -e '
+    cleanup_key = lambda do |value|
+      ["cleanup", %q{"cleanup"}, 39.chr + "cleanup" + 39.chr].any? do |key|
+        next false unless value.start_with?(key)
+
+        remainder = value[key.length..].lstrip
+        remainder.empty? || remainder.start_with?(".")
+      end
+    end
+
+    inside_table = false
+    File.foreach(ARGV.fetch(0)) do |line|
+      value = line.split("#", 2).first.strip
+      if value.start_with?("[") && value.end_with?("]")
+        unless value.start_with?("[[") || value[-2, 2] == "]]"
+          table_name = value[1...-1].strip
+          exit 0 if cleanup_key.call(table_name)
+        end
+        inside_table = true
+        next
+      end
+
+      root_key = value.split("=", 2).first.to_s.strip
+      exit 0 if !inside_table && cleanup_key.call(root_key)
+    end
+    exit 1
+  ' "$_configured_codex_environment"
+}
+
+_upgrade_codex_cleanup_table() {
+  _cleanup_codex_environment="$1"
+  _cleanup_codex_directory=$(dirname -- "$_cleanup_codex_environment")
+  _cleanup_codex_temporary=$(mktemp "$_cleanup_codex_directory/.workspace-init.XXXXXX") || return 1
+
+  if ! CODEX_CLEANUP_TOML_LINE="$_CODEX_CLEANUP_TOML_LINE" \
+    CODEX_CLEANUP_TOML_LINE_LEGACY_PATH_REQUIRED="$_CODEX_CLEANUP_TOML_LINE_LEGACY_PATH_REQUIRED" awk '
+    /^[[:space:]]*\[[[:space:]]*(cleanup|"cleanup"|\047cleanup\047)[[:space:]]*\][[:space:]]*(#.*)?$/ {
+      inside_cleanup = 1
+      print
+      next
+    }
+    inside_cleanup && /^[[:space:]]*\[/ {
+      inside_cleanup = 0
+    }
+    inside_cleanup && /^[[:space:]]*script[[:space:]]*=/ {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      legacy_path_required = ENVIRON["CODEX_CLEANUP_TOML_LINE_LEGACY_PATH_REQUIRED"]
+      if (line == legacy_path_required ||
+          (index(line, legacy_path_required) == 1 && substr(line, length(legacy_path_required) + 1) ~ /^[[:space:]]*#/)) {
+        print ENVIRON["CODEX_CLEANUP_TOML_LINE"]
+        next
+      }
+      value = $0
+      sub(/^[[:space:]]*script[[:space:]]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]*$/, "", value)
+      if (value == "\"bin/workspace archive\"" || value == "\047bin/workspace archive\047" ||
+          value ~ /^"bin\/workspace archive"[[:space:]]*#/ ||
+          value ~ /^\047bin\/workspace archive\047[[:space:]]*#/) {
+        print ENVIRON["CODEX_CLEANUP_TOML_LINE"]
+        next
+      }
+    }
+    { print }
+  ' "$_cleanup_codex_environment" > "$_cleanup_codex_temporary"; then
+    rm -f "$_cleanup_codex_temporary"
+    return 1
+  fi
+
+  _finish_atomic_write "$_cleanup_codex_temporary" "$_cleanup_codex_environment" 644
+}
+
+_ensure_codex_cleanup() {
+  _cleanup_codex_environment="$1"
+
+  # Any explicit cleanup is a public project contract. Only replace the exact
+  # historical Workspace archive default; inline/platform/custom values stay
+  # byte-for-byte unchanged.
+  if _codex_cleanup_is_configured "$_cleanup_codex_environment"; then
+    _upgrade_codex_cleanup_table "$_cleanup_codex_environment"
+    return
+  fi
+
+  _codex_environment_is_workspace_managed "$_cleanup_codex_environment" || return 0
+
+  _cleanup_codex_directory=$(dirname -- "$_cleanup_codex_environment")
+  _cleanup_codex_temporary=$(mktemp "$_cleanup_codex_directory/.workspace-init.XXXXXX") || return 1
+  if ! cat "$_cleanup_codex_environment" > "$_cleanup_codex_temporary"; then
+    rm -f "$_cleanup_codex_temporary"
+    return 1
+  fi
+  [ -z "$(tail -c1 "$_cleanup_codex_environment" 2>/dev/null)" ] || printf '\n' >> "$_cleanup_codex_temporary"
+  printf '\n[cleanup]\n%s\n' "$_CODEX_CLEANUP_TOML_LINE" >> "$_cleanup_codex_temporary"
+  _finish_atomic_write "$_cleanup_codex_temporary" "$_cleanup_codex_environment" 644
+}
+
 # Convert a legacy conductor.json (in the current directory) into the body of
 # .conductor/settings.toml, printed on stdout. Legacy conductor.json is a closed,
 # documented format with exactly three fields, which map to new names that the
@@ -369,6 +482,7 @@ if _linked_provider_config .codex/environments/environment.toml; then
 elif [ -f .codex/environments/environment.toml ]; then
   _use_project_workspace_entrypoint .codex/environments/environment.toml
   _ensure_codex_info_action .codex/environments/environment.toml
+  _ensure_codex_cleanup .codex/environments/environment.toml
   step ".codex/environments/environment.toml already exists (Workspace commands updated)"
 else
   _codex_environment_name=$(basename "$(pwd)" \
@@ -382,6 +496,9 @@ name = "$_codex_environment_name"
 
 [setup]
 script = "bin/workspace bootstrap"
+
+[cleanup]
+$_CODEX_CLEANUP_TOML_LINE
 
 [[actions]]
 name = "Run"
@@ -401,9 +518,9 @@ EOF
   ok "Created .codex/environments/environment.toml"
 fi
 
-# SessionEnd does not distinguish archive from ordinary close/idle events.
-# Deferred prune is intentionally reconciliation-only: it cleans resources
-# after Git confirms that Codex removed the associated worktree.
+# Native Codex cleanup is the normal teardown path. SessionEnd remains recovery
+# for older clients, interrupted cleanup, forced worktree deletion, and app
+# shutdown: deferred prune acts only after Git confirms the worktree is gone.
 if _linked_provider_config .codex/hooks.json; then
   :
 elif [ -f .codex/hooks.json ]; then
@@ -412,7 +529,7 @@ elif [ -f .codex/hooks.json ]; then
 else
   _atomic_write .codex/hooks.json 644 <<'EOF'
 {
-  "description": "Clean resources after Codex removes managed worktrees.",
+  "description": "Recover resources when native Codex worktree cleanup did not finish.",
   "hooks": {
     "SessionEnd": [
       {

@@ -30,6 +30,7 @@ Strong signals you're in workspace territory: a `.workspace` file in the repo, a
 | `bin/workspace bootstrap` | In each sibling checkout, after cloning or `git worktree add` | Links untracked shared files, exports the suffix, runs the dedicated setup hook (or legacy setup fallback), prepares databases, writes `.workspace`, and runs optional post-setup hooks. In root, only runs ordinary setup. Never runs `bin/update`. |
 | `bin/workspace run` | To start the dev server in a sibling | Loads linked `.env` defaults, exports ports and `WORKSPACE_DB_SUFFIX`, sources `bin/workspace-run-hook`, displays its optional `WORKSPACE_APP_URL`, then starts foreman. |
 | `bin/workspace archive` | When you're done with a sibling workspace | Runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, drops the suffixed DBs. |
+| `bin/workspace prune` | From the root or any remaining checkout after an external tool removes Git worktrees | Reconciles the shared Git registry and archives resources for worktrees that no longer exist. Safe to re-run. |
 | `bin/workspace info` | To inspect any initialized checkout | Prints provider, name, root, suffix, URL, and the allocated 10-port block. |
 | `bin/workspace update` | To pull the latest CLI after initialization | Bypasses the repository minimum-version check so an outdated install can update. |
 | `bin/workspace version` | — | Prints the current version. |
@@ -40,6 +41,7 @@ The project customizes the lifecycle by dropping executable scripts into its own
 
 | Hook | When it runs | How |
 | --- | --- | --- |
+| `bin/workspace-identity-hook` | Before isolated sibling lifecycle work when neither `.conductor-workspace` nor `.workspace` exists; print the established name without `_` | Executed with `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and derived `WORKSPACE_NAME` exported; empty output defers to provider/Git defaults; never called for the root/default checkout |
 | `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; materialize local `database.yml` here when needed | Executed |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX`, before Workspace prepares dev/test databases; prevents the legacy setup fallback in managed siblings | Executed |
 | `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
@@ -54,7 +56,10 @@ A hook that isn't executable (`chmod +x`) won't run. Every hook is optional;
 
 - **Root workspace**: the original checkout. It owns shared untracked config and has no `.workspace` file. Normal development remains `bin/setup` once, `bin/update` after pulls, and `bin/dev` to run. `workspace bootstrap` there only uses ordinary setup detection — no managed hooks, linking, suffixing, database preparation, or `bin/update`.
 - **Sibling workspace**: any other checkout. Has a `.workspace` file containing its name. Gets `WORKSPACE_DB_SUFFIX=_<name>` exported during bootstrap and run, which the `database.yml` patch uses to suffix DB names (`myapp_development` → `myapp_development_<name>`).
-- **Workspace name**: derived from the directory name (e.g. `myapp-feature-x` → `feature-x`). Superset names get sanitized — lowercased, special chars stripped. The actual name used is whatever's in `.workspace`.
+- **Ad-hoc Rails commands**: after bootstrap patches `database.yml` and persists `.workspace`, ordinary commands such as `bin/rails console`, migrations, and runners read `.conductor-workspace` or `.workspace` when `WORKSPACE_DB_SUFFIX` is absent. The helper uses provider/Git discovery only to keep the root checkout unsuffixed; it never invokes the identity hook. Run bootstrap first so a sibling has a stable marker.
+- **Workspace name**: resolved consistently by every lifecycle command. A non-empty `.conductor-workspace` wins for an existing integration, followed by `.workspace`, `bin/workspace-identity-hook`, provider variables, then the stable ID of any linked Git worktree. Markerless Superset identities retain the provider's historical 45-character limit; Superconductor and generic Git identities use 40 characters. The main checkout remains unsuffixed.
+- **Codex cleanup**: the generated native cleanup script is the happy path. It prefers the quoted `CODEX_WORKTREE_PATH` when available. Current Codex instead starts cleanup inside the disposable worktree without exporting that setup-only variable, so Workspace verifies that the current checkout is a linked Git worktree before invoking its `bin/workspace archive`. Paths locate checkouts only; they never define the workspace name or database suffix.
+- **Cleanup recovery**: the shared Git registry survives worktree deletion. The SessionEnd `bin/workspace prune --deferred` hook and bootstrap/run reconciliation remain fallbacks for older Codex versions, interrupted cleanup, forced deletion, and app shutdown.
 - **Idempotency**: `init` and `bootstrap` are safe to re-run. The `database.yml` patch detects whether it's already applied.
 
 ## Common workflows
@@ -94,9 +99,12 @@ cd .. && rm -rf myapp-feature-x
 - The `database.yml` patch matches a specific shape. Hand-edited unusual `database.yml` files may not patch cleanly — check the diff after `init`.
 - `workspace-run-hook` is **sourced**, the others are **executed**. Use `export` in run-hook; use plain commands elsewhere. Set `WORKSPACE_APP_URL` there when the generic localhost URL is inaccurate.
 - Generated provider configs call `bin/workspace`, which tries PATH and then `${WORKSPACE_HOME:-$HOME/.workspace}`. It reports an install command when missing and an exact update command when older than `.workspace-version`; it never downloads code automatically.
+- `.workspace` must be non-empty; an empty `.conductor-workspace` retains its legacy unpinned behavior. Both marker paths must be regular, non-symlink files. Reserved, multiline, and control-character identities fail closed instead of silently selecting another database. Existing non-empty `.conductor-workspace` files remain authoritative and are mirrored to `.workspace` after successful bootstrap.
+- Generic Git worktrees are registered so cleanup can recover after an external tool deletes their directories or native Codex cleanup is interrupted. Run `bin/workspace prune` from a surviving checkout to reconcile immediately; the SessionEnd deferred prune and normal bootstrap/run reconciliation are fallback paths. Archive cleans only its current workspace.
+- Port precedence is `WORKSPACE_PORT`, an existing Git registry reservation, `SUPERCONDUCTOR_PORT`, `SUPERSET_PORT`, `CONDUCTOR_PORT`, then deterministic or default allocation. Port inputs must be decimal base ports from `1` through `65526` so the complete 10-port block stays within `1-65535`; leading zeroes are normalized. Invalid values fail before starting processes, and an explicit `WORKSPACE_PORT` already overlapping another Git worktree's block fails instead of silently moving or sharing it. `bin/workspace info` reports the resolved block.
 
 ## Reference
 
 - Source: <https://github.com/jnunemaker/workspace>
 - Local install: `~/.workspace` (CLI in `~/.workspace/bin/workspace`, lib scripts in `~/.workspace/lib/`)
-- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)
+- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)

@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
 unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
+unset WORKSPACE_PORT 2>/dev/null || true
 
 git_root="$TEST_TMP/registry-root"
 CODEX_HOME="$TEST_TMP/codex"
@@ -37,8 +38,145 @@ assert_equal "registered worktree path recorded" "$git_worktree" "$(sed -n '3p' 
 assert_equal "registered port recorded" "51230" "$(sed -n '4p' "$registry_entry")"
 assert_equal "registered port accessor decodes record" "51230" "$(registered_workspace_port)"
 assert_equal "git port derivation reuses registration" "51230" "$(derive_workspace_port 3000)"
+WORKSPACE_PORT=51300
+assert_equal "explicit port overrides Git registration" "51300" "$(derive_workspace_port 3000)"
+unset WORKSPACE_PORT
 load_registered_workspace "$registry_entry"
 assert_equal "registered path accessor decodes record" "$git_worktree" "$WORKSPACE_REGISTERED_PATH"
+
+# Explicit port blocks are user intent, so a second linked worktree must fail
+# before sweeping or starting on a block already reserved by another worktree.
+conflicting_worktree="$CODEX_HOME/worktrees/registry-conflict"
+git -C "$git_root" worktree add -q --detach "$conflicting_worktree"
+conflicting_worktree=$(cd "$conflicting_worktree" && pwd -P)
+collision_bin="$TEST_TMP/collision-bin"
+collision_sweep_log="$TEST_TMP/collision-sweep.log"
+collision_run_log="$TEST_TMP/collision-run.log"
+mkdir -p "$collision_bin" "$conflicting_worktree/bin"
+cat > "$collision_bin/lsof" <<'EOF'
+#!/bin/sh
+printf 'swept\n' >> "$WORKSPACE_TEST_SWEEP_LOG"
+exit 1
+EOF
+chmod +x "$collision_bin/lsof"
+cat > "$conflicting_worktree/bin/foreman" <<'EOF'
+#!/bin/sh
+printf 'started\n' > "$WORKSPACE_TEST_RUN_LOG"
+EOF
+chmod +x "$conflicting_worktree/bin/foreman"
+
+cd "$conflicting_worktree"
+resolve_workspace
+sanitize_workspace_name
+conflicting_registry_entry="$git_root/.git/workspace/registry/$WORKSPACE_NAME.record"
+assert_false "overlapping explicit port block aborts run" env PATH="$collision_bin:$PATH" WORKSPACE_PORT=51235 WORKSPACE_TEST_SWEEP_LOG="$collision_sweep_log" WORKSPACE_TEST_RUN_LOG="$collision_run_log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_false "explicit port collision creates no registration" [ -e "$conflicting_registry_entry" ]
+assert_false "explicit port collision does not sweep ports" [ -e "$collision_sweep_log" ]
+assert_false "explicit port collision does not start processes" [ -e "$collision_run_log" ]
+assert_false "invalid explicit port block aborts run" env PATH="$collision_bin:$PATH" WORKSPACE_PORT=65535 WORKSPACE_TEST_SWEEP_LOG="$collision_sweep_log" WORKSPACE_TEST_RUN_LOG="$collision_run_log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_false "invalid explicit port creates no registration" [ -e "$conflicting_registry_entry" ]
+assert_false "invalid explicit port does not sweep ports" [ -e "$collision_sweep_log" ]
+assert_false "invalid explicit port does not start processes" [ -e "$collision_run_log" ]
+
+cat > "$conflicting_worktree/bin/setup" <<'EOF'
+#!/bin/sh
+printf 'setup\n' >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+EOF
+cat > "$conflicting_worktree/bin/rails" <<'EOF'
+#!/bin/sh
+printf 'rails:%s\n' "$*" >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+EOF
+chmod +x "$conflicting_worktree/bin/setup" "$conflicting_worktree/bin/rails"
+collision_bootstrap_log="$TEST_TMP/collision-bootstrap.log"
+assert_false "overlapping explicit port block aborts bootstrap before setup" env WORKSPACE_PORT=51235 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_false "bootstrap collision has no project side effects" [ -e "$collision_bootstrap_log" ]
+assert_false "bootstrap collision writes no stable marker" [ -e .workspace ]
+assert_false "invalid explicit port aborts bootstrap before setup" env WORKSPACE_PORT=65535 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_false "invalid bootstrap port has no project side effects" [ -e "$collision_bootstrap_log" ]
+assert_false "invalid bootstrap port writes no stable marker" [ -e .workspace ]
+
+# Registration is published before project setup. If setup fails after creating
+# resources, prune can still discover the removed worktree and clean them up.
+cat > "$conflicting_worktree/bin/setup" <<'EOF'
+#!/bin/sh
+printf 'setup\n' >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+exit 42
+EOF
+chmod +x "$conflicting_worktree/bin/setup"
+assert_false "failed Git bootstrap reports failure" env WORKSPACE_PORT=51400 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_true "failed Git bootstrap publishes its cleanup record before setup" [ -f "$conflicting_registry_entry" ]
+assert_equal "failed Git bootstrap records its reserved port" "51400" "$(sed -n '4p' "$conflicting_registry_entry")"
+assert_true "failed Git bootstrap reached project setup" [ -e "$collision_bootstrap_log" ]
+assert_false "failed Git bootstrap does not write a stable marker" [ -e .workspace ]
+unregister_workspace
+rm -f "$collision_bootstrap_log"
+
+publication_bin="$TEST_TMP/publication-bin"
+publication_sweep_log="$TEST_TMP/publication-sweep.log"
+publication_run_log="$TEST_TMP/publication-run.log"
+mkdir -p "$publication_bin"
+cat > "$publication_bin/mv" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$publication_bin/mv"
+assert_false "registry publication failure aborts run" env PATH="$publication_bin:$collision_bin:$PATH" WORKSPACE_PORT=51400 WORKSPACE_TEST_SWEEP_LOG="$publication_sweep_log" WORKSPACE_TEST_RUN_LOG="$publication_run_log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_false "publication failure does not sweep ports" [ -e "$publication_sweep_log" ]
+assert_false "publication failure does not start processes" [ -e "$publication_run_log" ]
+assert_equal "publication failure cleans temporary records" "" "$(find "$git_root/.git/workspace/registry" -maxdepth 1 -name '.record.*' -print)"
+assert_false "registry publication failure aborts bootstrap before setup" env PATH="$publication_bin:$PATH" WORKSPACE_PORT=51400 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_false "bootstrap publication failure has no project side effects" [ -e "$collision_bootstrap_log" ]
+assert_false "bootstrap publication failure writes no stable marker" [ -e .workspace ]
+
+cd "$git_worktree"
+resolve_workspace
+sanitize_workspace_name
+WORKSPACE_NAME="$registered_name"
+
+WORKSPACE_NAME="feature/foo"
+punctuation_registry_entry=$(workspace_registry_entry)
+register_workspace "51260"
+assert_true "punctuation identity is registered with an opaque record key" [ -f "$punctuation_registry_entry" ]
+assert_equal "punctuation identity remains exact in its record" "feature/foo" "$(sed -n '1p' "$punctuation_registry_entry")"
+assert_equal "punctuation identity reuses its registered port" "51260" "$(registered_workspace_port)"
+unregister_workspace
+assert_false "punctuation identity unregisters its opaque record" [ -e "$punctuation_registry_entry" ]
+
+# Legacy opaque records used identity-<hash>, which is also a valid literal
+# identity. Preserve the old record while placing the literal identity in a
+# disjoint filename namespace.
+unsafe_registry_name="feature/collision"
+unsafe_registry_hash=$(printf '%s' "$unsafe_registry_name" | git hash-object --stdin)
+legacy_unsafe_entry="$git_root/.git/workspace/registry/identity-$unsafe_registry_hash.record"
+printf '%s\n%s\n%s\n%s\n' "$unsafe_registry_name" "$git_root" "$git_worktree" "51260" > "$legacy_unsafe_entry"
+WORKSPACE_NAME="identity-$unsafe_registry_hash"
+literal_collision_entry=$(workspace_registry_entry)
+register_workspace "51270"
+assert_true "literal identity gets a disjoint record from legacy encoded identity" [ "$literal_collision_entry" != "$legacy_unsafe_entry" ]
+assert_true "literal identity registration preserves the legacy encoded record" [ -f "$legacy_unsafe_entry" ]
+assert_equal "literal collision record retains its exact identity" "$WORKSPACE_NAME" "$(sed -n '1p' "$literal_collision_entry")"
+unregister_workspace
+assert_true "unregistering literal identity preserves legacy encoded identity" [ -f "$legacy_unsafe_entry" ]
+WORKSPACE_NAME="$unsafe_registry_name"
+assert_equal "unsafe identity still resolves its legacy record" "$legacy_unsafe_entry" "$(workspace_registry_entry)"
+rm "$legacy_unsafe_entry"
+
+# The reverse occupation order also stays disjoint: a literal safe record may
+# already own the old identity-<hash> path before the unsafe identity arrives.
+WORKSPACE_NAME="identity-$unsafe_registry_hash"
+literal_first_entry=$(workspace_registry_entry)
+register_workspace "51270"
+WORKSPACE_NAME="$unsafe_registry_name"
+unsafe_second_entry=$(workspace_registry_entry)
+register_workspace "51280"
+assert_true "unsafe identity avoids an existing literal legacy-style path" [ "$unsafe_second_entry" != "$literal_first_entry" ]
+assert_equal "literal-first record keeps its identity" "identity-$unsafe_registry_hash" "$(sed -n '1p' "$literal_first_entry")"
+assert_equal "unsafe second record keeps its identity" "$unsafe_registry_name" "$(sed -n '1p' "$unsafe_second_entry")"
+unregister_workspace
+assert_true "unregistering unsafe identity preserves literal-first record" [ -f "$literal_first_entry" ]
+WORKSPACE_NAME="identity-$unsafe_registry_hash"
+unregister_workspace
+WORKSPACE_NAME="$registered_name"
 
 default_record="$git_root/.git/workspace/registry/default.record"
 printf 'default\n%s\n%s\n51290\n' "$git_root" "$git_worktree" > "$default_record"
@@ -50,9 +188,21 @@ assert_false "registry entry path rejects reserved default identity" workspace_r
 WORKSPACE_NAME="$registered_name"
 
 WORKSPACE_NAME="second-worktree"
-register_workspace "51230"
+register_workspace "51235"
 second_registry_entry="$git_root/.git/workspace/registry/second-worktree.record"
-assert_equal "registration avoids an occupied port block" "51240" "$(sed -n '4p' "$second_registry_entry")"
+assert_equal "automatic registration avoids an overlapping port block" "51245" "$(sed -n '4p' "$second_registry_entry")"
+unregister_workspace
+WORKSPACE_NAME="$registered_name"
+
+WORKSPACE_NAME="top-range-owner"
+register_workspace "58990"
+top_range_entry="$git_root/.git/workspace/registry/top-range-owner.record"
+WORKSPACE_NAME="wrapped-range-candidate"
+register_workspace "58990"
+wrapped_range_entry="$git_root/.git/workspace/registry/wrapped-range-candidate.record"
+assert_equal "automatic allocation wraps high-range conflicts to 50000" "50000" "$(sed -n '4p' "$wrapped_range_entry")"
+unregister_workspace
+WORKSPACE_NAME="top-range-owner"
 unregister_workspace
 WORKSPACE_NAME="$registered_name"
 
@@ -63,8 +213,14 @@ unregister_workspace "$claimed_entry"
 assert_true "unregistering a claim preserves republished record" [ -f "$registry_entry" ]
 
 cd "$git_root"
+nonregular_target="$TEST_TMP/nonregular-record-target"
+nonregular_entry="$git_root/.git/workspace/registry/nonregular.record"
+printf 'nonregular\n%s\n%s\n51280\n' "$git_root" "$TEST_TMP/removed-nonregular-worktree" > "$nonregular_target"
+ln -s "$nonregular_target" "$nonregular_entry"
 sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
 assert_true "live registered worktree is preserved" [ -f "$registry_entry" ]
+assert_true "prune leaves non-regular registry records untouched" [ -L "$nonregular_entry" ]
+rm "$nonregular_entry"
 
 orphaned_claim="$registry_entry.pruning.99999999"
 mv "$registry_entry" "$orphaned_claim"
@@ -97,6 +253,14 @@ assert_equal "run uses its registered port" "$(sed -n '4p' "$registry_entry")" "
 # allowing prune or a later archive to retry.
 mkdir -p config
 printf 'development:\n  database: app_development\n' > config/database.yml
+cat > .env <<'EOF'
+DATABASE_URL=postgres://wrong-partial.example.test/wrong
+false
+EOF
+assert_false "manual archive stops on dotenv failure" env PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
+assert_true "dotenv archive failure preserves registry" [ -f "$registry_entry" ]
+assert_false "dotenv archive failure releases registry lock" [ -e "$git_root/.git/workspace/prune.lock" ]
+rm .env
 cat > bin/rails <<'EOF'
 #!/bin/sh
 exit 1
@@ -155,6 +319,14 @@ cat > bin/workspace-archive-hook <<'EOF'
 printf '%s:%s\n' "$(pwd -P)" "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_ARCHIVE_HOOK_LOG"
 EOF
 chmod +x bin/workspace-archive-hook
+
+invalid_port_entry="$git_root/.git/workspace/registry/invalid-port.record"
+invalid_port_lsof_log="$TEST_TMP/invalid-port-lsof.log"
+printf 'invalid-port\n%s\n%s\n65535\n' "$git_root" "$TEST_TMP/removed-invalid-port-worktree" > "$invalid_port_entry"
+PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$invalid_port_lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/archive.sh" --registry-entry "$invalid_port_entry" >/dev/null 2>&1
+assert_false "invalid registered port is not swept during archive" [ -e "$invalid_port_lsof_log" ]
+assert_false "successful archive removes an invalid-port registry record" [ -e "$invalid_port_entry" ]
+assert_true "invalid registered port does not prevent database cleanup" grep -q '^development:_invalid-port:db:drop$' "$prune_log"
 
 ln -s "$$" "$git_root/.git/workspace/prune.lock"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"

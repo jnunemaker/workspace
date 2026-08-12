@@ -34,7 +34,7 @@ trap 'release_workspace_registry_lock' EXIT HUP INT TERM
 # A killed prune may leave its immutable claim behind. A newer published record
 # wins; otherwise restore the claim so this run can retry its cleanup.
 for _orphaned_claim in "$_registry_root"/*.record.pruning.*; do
-  [ -f "$_orphaned_claim" ] || continue
+  [ -f "$_orphaned_claim" ] && [ ! -L "$_orphaned_claim" ] || continue
   _orphaned_entry=${_orphaned_claim%%.pruning.*}
   if [ -f "$_orphaned_entry" ]; then
     rm -f "$_orphaned_claim"
@@ -57,7 +57,7 @@ restore_claimed_record() {
 }
 
 for _registry_entry in "$_registry_root"/*.record; do
-  [ -f "$_registry_entry" ] || continue
+  [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || continue
   _claimed_entry="$_registry_entry.pruning.$$"
   mv "$_registry_entry" "$_claimed_entry" 2>/dev/null || continue
   if ! load_registered_workspace "$_claimed_entry"; then

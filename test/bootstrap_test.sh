@@ -104,7 +104,12 @@ app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/dedicated-setup-hook.log"
 cd "$app_dir"
-printf 'shared=true\n' > "$root_dir/.env"
+cat > "$root_dir/.env" <<'ENV'
+shared=true
+WORKSPACE_NAME=wrong-dotenv-identity
+WORKSPACE_PROVIDER=wrong-dotenv-provider
+WORKSPACE_ROOT_PATH=/wrong/dotenv/root
+ENV
 cat > config/database.yml <<'YAML'
 development:
   database: hook_development
@@ -221,6 +226,91 @@ assert_equal "Superset setup receives exact suffix" "setup:_review-blue-sky" "$(
 assert_true "Superset development preparation receives exact suffix" grep -q '^rails:development:_review-blue-sky:db:prepare$' "$log"
 assert_true "Superset test preparation receives exact suffix" grep -q '^rails:test:_review-blue-sky:db:prepare$' "$log"
 
+# Markerless Superset adoption must retain the provider's historical 45-character
+# identity rather than re-keying the workspace to Workspace's newer limit.
+paths=$(make_bootstrap_app "superset-long-identity")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/superset-long-identity.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+superset_identity="123456789012345678901234567890123456789012345"
+
+assert_true "45-character Superset bootstrap succeeds" run_superset_bootstrap "$root_dir" "$superset_identity" "$log"
+assert_equal "45-character Superset identity reaches setup" "setup:_${superset_identity}" "$(sed -n '1p' "$log")"
+assert_true "45-character Superset identity reaches database preparation" grep -q "^rails:development:_${superset_identity}:db:prepare$" "$log"
+assert_equal "45-character Superset identity is pinned unchanged" "$superset_identity" "$(cat .workspace)"
+
+# Existing Conductor-family worktrees already pin their database identity in
+# .conductor-workspace. That marker wins over both provider drift and a stale
+# Workspace marker, including identities longer than Workspace's own default.
+paths=$(make_bootstrap_app "legacy-conductor-identity")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/legacy-conductor-identity.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+legacy_identity="123456789012345678901234567890123456789012345"
+printf '%s' "$legacy_identity" > .conductor-workspace
+printf '%s' "wrong-workspace-name" > .workspace
+
+assert_true "legacy Conductor identity bootstrap succeeds" run_superset_bootstrap "$root_dir" "renamed/provider-workspace" "$log"
+assert_equal "legacy Conductor identity reaches setup" "setup:_${legacy_identity}" "$(sed -n '1p' "$log")"
+assert_true "legacy Conductor identity reaches development preparation" grep -q "^rails:development:_${legacy_identity}:db:prepare$" "$log"
+assert_equal "Workspace marker is synchronized to legacy identity" "$legacy_identity" "$(cat .workspace)"
+
+# A project identity hook supplies an established database key on first use.
+# Once bootstrap writes .workspace, repeated bootstrap never calls the hook or
+# follows a renamed provider identity.
+paths=$(make_bootstrap_app "identity-hook-bootstrap")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/identity-hook-bootstrap.log"
+hook_log="$TEST_TMP/identity-hook-calls.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'called\n' >> "$WORKSPACE_IDENTITY_HOOK_LOG"
+printf '%s' "stable-worktree-id"
+SCRIPT
+chmod +x bin/workspace-identity-hook
+
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "display-name" "$log"
+assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
+assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
+
+: > "$log"
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
+assert_equal "repeated bootstrap keeps pinned suffix" "setup:_stable-worktree-id" "$(sed -n '1p' "$log")"
+assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
+
+# Invalid stable identity fails before project setup or database preparation.
+paths=$(make_bootstrap_app "invalid-stable-identity")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/invalid-stable-identity.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+printf 'first\nsecond\n' > .workspace
+
+assert_false "invalid stable identity aborts bootstrap" run_bootstrap "$root_dir" "provider-name" "$log"
+assert_false "invalid stable identity prevents setup" [ -f "$log" ]
+
+# A non-regular marker cannot be synchronized atomically. Reject it during
+# identity resolution, before project setup or database preparation begins.
+paths=$(make_bootstrap_app "directory-stable-identity")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/directory-stable-identity.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+mkdir .workspace
+
+assert_false "directory stable identity aborts bootstrap" run_bootstrap "$root_dir" "provider-name" "$log"
+assert_false "directory stable identity prevents setup and database preparation" [ -f "$log" ]
+assert_equal "directory stable identity is not modified" "" "$(find .workspace -mindepth 1 -maxdepth 1 -print)"
+
 # Existing projects whose setup script creates database.yml remain supported:
 # the CLI patches the generated file before preparing the databases.
 paths=$(make_bootstrap_app "setup-creates-db")
@@ -319,9 +409,16 @@ cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 touch .rails-called
 SCRIPT
-chmod +x bin/setup bin/workspace-setup-hook bin/update bin/rails
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+touch .identity-hook-called
+printf '%s' "must-not-isolate-root"
+SCRIPT
+chmod +x bin/setup bin/workspace-setup-hook bin/update bin/rails bin/workspace-identity-hook
 assert_true "manager default remains a root setup" run_bootstrap "$root_dir" "default" "$log"
 assert_equal "root setup has no isolated suffix" "root-setup:unset" "$(cat "$log")"
+assert_false "root setup ignores identity hook" [ -f .identity-hook-called ]
+assert_false "root setup does not persist isolated identity" [ -e .workspace ]
 assert_false "root setup does not prepare isolated databases" [ -f .rails-called ]
 assert_false "root setup ignores managed workspace setup hook" [ -f .workspace-setup-called ]
 assert_false "root setup never invokes bin/update" [ -f .update-called ]

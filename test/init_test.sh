@@ -8,6 +8,17 @@ run_init() {
   sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1
 }
 
+codex_cleanup_command() {
+  ruby -rjson -e '
+    text = File.read(ARGV.fetch(0))
+    cleanup = text.split(/^\[cleanup\][ \t]*$/, 2).fetch(1)
+    cleanup = cleanup.split(/^\[/, 2).first
+    literal = cleanup[/^[ \t]*script[ \t]*=[ \t]*("(?:\\.|[^"])*")[ \t]*$/, 1]
+    abort "missing Codex cleanup script" unless literal
+    puts JSON.parse(literal)
+  ' "$1"
+}
+
 # ── init: creates .conductor/settings.toml ──────────────────────
 
 app_dir=$(create_fake_app "init-conductor")
@@ -37,12 +48,117 @@ assert_true "superset config has shim teardown script" grep -q 'bin/workspace ar
 
 assert_true "codex environment created" [ -f .codex/environments/environment.toml ]
 assert_true "codex environment runs shim bootstrap" grep -q 'script = "bin/workspace bootstrap"' .codex/environments/environment.toml
+assert_true "codex environment has native cleanup" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
 assert_true "codex environment has shim run action" grep -q 'command = "bin/workspace run"' .codex/environments/environment.toml
 assert_true "codex environment has shim info action" grep -q 'command = "bin/workspace info"' .codex/environments/environment.toml
 assert_true "codex environment has shim archive action" grep -q 'command = "bin/workspace archive"' .codex/environments/environment.toml
 assert_true "codex hooks created" [ -f .codex/hooks.json ]
-assert_true "codex hooks schedule shim prune" grep -q 'bin/workspace prune --deferred' .codex/hooks.json
+assert_true "codex recovery hook schedules shim prune" grep -q 'bin/workspace prune --deferred' .codex/hooks.json
 assert_true "codex hooks contain valid JSON" ruby -rjson -e 'JSON.parse(File.read(".codex/hooks.json"))'
+
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+assert_true "native cleanup quotes the resolved worktree path" sh -c 'case "$1" in *"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+assert_false "native cleanup does not derive identity from the worktree path" sh -c 'case "$1" in *WORKSPACE_NAME*|*WORKSPACE_DB_SUFFIX*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+assert_false "native cleanup does not use the source tree path" sh -c 'case "$1" in *CODEX_SOURCE_TREE_PATH*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+
+cleanup_worktree="$TEST_TMP/codex cleanup worktree"
+mkdir -p "$cleanup_worktree/bin"
+cat > "$cleanup_worktree/bin/workspace" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$(pwd -P)" > "$WORKSPACE_TEST_CLEANUP_CWD"
+printf '%s\n' "$*" > "$WORKSPACE_TEST_CLEANUP_ARGS"
+exit "${WORKSPACE_TEST_CLEANUP_STATUS:-0}"
+EOF
+chmod +x "$cleanup_worktree/bin/workspace"
+cleanup_cwd_log="$TEST_TMP/codex-cleanup-cwd.log"
+cleanup_args_log="$TEST_TMP/codex-cleanup-args.log"
+CODEX_WORKTREE_PATH="$cleanup_worktree" \
+  WORKSPACE_TEST_CLEANUP_CWD="$cleanup_cwd_log" \
+  WORKSPACE_TEST_CLEANUP_ARGS="$cleanup_args_log" \
+  sh -c "$cleanup_command"
+assert_equal "native cleanup runs inside the quoted Codex worktree" "$(cd "$cleanup_worktree" && pwd -P)" "$(cat "$cleanup_cwd_log")"
+assert_equal "native cleanup invokes archive through the worktree shim" "archive" "$(cat "$cleanup_args_log")"
+
+cleanup_output="$TEST_TMP/codex-cleanup-missing.out"
+assert_false "native cleanup rejects a missing path outside a Git worktree" env -u CODEX_WORKTREE_PATH sh -c "$cleanup_command" >"$cleanup_output" 2>&1
+assert_true "missing path error explains the required cleanup context" grep -q 'CODEX_WORKTREE_PATH is not set.*not a Git worktree' "$cleanup_output"
+cleanup_output="$TEST_TMP/codex-cleanup-invalid.out"
+assert_false "native cleanup rejects an invalid worktree path" env CODEX_WORKTREE_PATH="$TEST_TMP/not-a-worktree" sh -c "$cleanup_command" >"$cleanup_output" 2>&1
+assert_true "invalid worktree path error includes the path" grep -q 'worktree path is not a directory' "$cleanup_output"
+invalid_cleanup_worktree="$TEST_TMP/codex-worktree-without-shim"
+mkdir -p "$invalid_cleanup_worktree"
+cleanup_output="$TEST_TMP/codex-cleanup-missing-shim.out"
+assert_false "native cleanup rejects a checkout without its Workspace shim" env CODEX_WORKTREE_PATH="$invalid_cleanup_worktree" sh -c "$cleanup_command" >"$cleanup_output" 2>&1
+assert_true "missing Workspace shim error is actionable" grep -q 'bin/workspace is missing or not executable' "$cleanup_output"
+
+CODEX_WORKTREE_PATH="$cleanup_worktree" \
+  WORKSPACE_TEST_CLEANUP_CWD="$cleanup_cwd_log" \
+  WORKSPACE_TEST_CLEANUP_ARGS="$cleanup_args_log" \
+  WORKSPACE_TEST_CLEANUP_STATUS=23 \
+  sh -c "$cleanup_command" >/dev/null 2>&1
+cleanup_status=$?
+assert_equal "native cleanup propagates archive failure" "23" "$cleanup_status"
+
+# Exercise the generated cleanup command through the real archive resolver in
+# a linked Git worktree. Codex's directory name locates the checkout; stable
+# markers continue to define the database suffix.
+identity_root=$(create_fake_app "native-cleanup-identity-root")
+cd "$identity_root"
+cat > config/database.yml <<'YAML'
+development:
+  database: native_cleanup_development
+test:
+  database: native_cleanup_test
+YAML
+git init -q
+git config user.email workspace@example.com
+git config user.name Workspace
+git add .
+git commit -qm "initial fixture"
+run_init
+git add .
+git commit -qm "workspace fixture"
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+
+identity_worktree="$TEST_TMP/codex-directory-basename"
+git worktree add -q -b native-cleanup-identity "$identity_worktree"
+cat > "$identity_worktree/bin/workspace" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = "archive" ] || exit 64
+exec sh "$WORKSPACE_HOME/lib/archive.sh"
+EOF
+cat > "$identity_worktree/bin/rails" <<'EOF'
+#!/bin/sh
+printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_NATIVE_CLEANUP_LOG"
+EOF
+chmod +x "$identity_worktree/bin/workspace" "$identity_worktree/bin/rails"
+identity_fake_bin="$TEST_TMP/native-cleanup-bin"
+mkdir -p "$identity_fake_bin"
+cat > "$identity_fake_bin/lsof" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$identity_fake_bin/lsof"
+identity_cleanup_log="$TEST_TMP/native-cleanup-identity.log"
+
+printf '%s' "stable-conductor-identity" > "$identity_worktree/.conductor-workspace"
+PATH="$identity_fake_bin:$PATH" \
+  WORKSPACE_HOME="$WORKSPACE_HOME" \
+  WORKSPACE_TEST_NATIVE_CLEANUP_LOG="$identity_cleanup_log" \
+  env -u CODEX_WORKTREE_PATH sh -c "cd \"\$1\" && $cleanup_command" sh "$identity_worktree" >/dev/null 2>&1
+assert_true "native cleanup uses the stable Conductor database identity" grep -q '^development:_stable-conductor-identity:db:drop$' "$identity_cleanup_log"
+assert_false "native cleanup does not use the Codex directory basename" grep -q '_codex-directory-basename' "$identity_cleanup_log"
+assert_true "native cleanup without CODEX_WORKTREE_PATH ran from the linked worktree" grep -q '^test:_stable-conductor-identity:db:drop$' "$identity_cleanup_log"
+
+rm "$identity_worktree/.conductor-workspace"
+printf '%s' "stable-workspace-identity" > "$identity_worktree/.workspace"
+: > "$identity_cleanup_log"
+PATH="$identity_fake_bin:$PATH" \
+  WORKSPACE_HOME="$WORKSPACE_HOME" \
+  WORKSPACE_TEST_NATIVE_CLEANUP_LOG="$identity_cleanup_log" \
+  CODEX_WORKTREE_PATH="$identity_worktree" \
+  sh -c "$cleanup_command" >/dev/null 2>&1
+assert_true "native cleanup uses the stable Workspace database identity" grep -q '^development:_stable-workspace-identity:db:drop$' "$identity_cleanup_log"
 
 # ── init: creates the entrypoint and no optional hook scaffolds ──
 
@@ -234,6 +350,9 @@ name = "custom-codex"
 
 [setup]
 script = "bin/custom-setup"
+
+[cleanup]
+script = "bin/custom-cleanup"
 EOF
 mkdir -p .codex
 cat > .codex/hooks.json <<'EOF'
@@ -247,7 +366,26 @@ assert_true "superconductor config not overwritten" grep -q 'custom-setup' .supe
 assert_true "superset config not overwritten" grep -q 'custom-setup' .superset/config.json
 assert_true "codex environment not overwritten" grep -q 'custom-codex' .codex/environments/environment.toml
 assert_false "codex environment default not appended" grep -q 'workspace bootstrap' .codex/environments/environment.toml
+assert_true "custom Codex cleanup is preserved" grep -q 'script = "bin/custom-cleanup"' .codex/environments/environment.toml
 assert_false "codex hooks not overwritten" grep -q 'workspace prune' .codex/hooks.json
+
+# Codex itself writes the autogenerated header. It is not evidence that
+# Workspace owns an otherwise custom environment lifecycle.
+app_dir=$(create_fake_app "init-preserve-autogenerated-custom-codex")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+# THIS IS AUTOGENERATED. DO NOT EDIT MANUALLY
+version = 1
+name = "custom-codex"
+
+[setup]
+script = "bin/custom-setup"
+EOF
+
+run_init
+
+assert_false "generic Codex autogenerated header does not imply Workspace ownership" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
 
 # ── init: upgrades only known Workspace commands in existing configs ──
 
@@ -276,6 +414,7 @@ cat > .codex/hooks.json <<'EOF'
 EOF
 
 run_init
+codex_environment_checksum=$(cksum .codex/environments/environment.toml)
 run_init
 
 assert_true "existing Conductor setup upgraded once" grep -q 'setup = "bin/workspace bootstrap"' .conductor/settings.toml
@@ -285,6 +424,8 @@ assert_false "entrypoint upgrade is idempotent" grep -q 'bin/bin/workspace' .con
 assert_true "existing Superconductor config upgraded" grep -q 'bin/workspace run' .superconductor/config.json
 assert_true "existing Superset config upgraded" grep -q 'bin/workspace archive' .superset/config.json
 assert_true "existing Codex environment upgraded" grep -q 'bin/workspace bootstrap' .codex/environments/environment.toml
+assert_true "existing Codex environment gains native cleanup" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
+assert_equal "existing Codex environment upgrade is idempotent" "$codex_environment_checksum" "$(cksum .codex/environments/environment.toml)"
 assert_true "existing Codex environment gains info action" grep -q 'command = "bin/workspace info"' .codex/environments/environment.toml
 assert_true "existing Codex hook upgraded" grep -q 'bin/workspace prune --deferred' .codex/hooks.json
 
@@ -303,6 +444,9 @@ cat > .codex/environments/environment.toml <<'EOF'
 [setup]
 script = 'workspace bootstrap'
 
+[cleanup]
+script = 'workspace archive'
+
 [[actions]]
 name = 'Workspace info'
 command = 'workspace info'
@@ -315,8 +459,146 @@ assert_true "single-quoted Conductor run upgraded" grep -q "run = 'bin/workspace
 assert_true "single-quoted custom command preserved" grep -q "archive = 'bin/custom-archive'" .conductor/settings.toml
 assert_true "single-quoted Codex setup upgraded" grep -q "script = 'bin/workspace bootstrap'" .codex/environments/environment.toml
 assert_true "single-quoted Codex info upgraded" grep -q "command = 'bin/workspace info'" .codex/environments/environment.toml
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+assert_true "single-quoted Workspace cleanup upgraded" sh -c 'case "$1" in *"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
 info_count=$(grep -c 'bin/workspace info' .codex/environments/environment.toml)
 assert_equal "single-quoted Codex info action is not duplicated" "1" "$info_count"
+
+# A Workspace-managed environment may already have a cleanup entry from an
+# earlier integration. Upgrade only the exact Workspace archive default.
+app_dir=$(create_fake_app "init-upgrade-codex-cleanup")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+[cleanup]
+script = "workspace archive"
+EOF
+
+run_init
+
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+assert_true "legacy Workspace cleanup enters the Codex worktree" sh -c 'case "$1" in *"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+CODEX_WORKTREE_PATH="$cleanup_worktree" \
+  WORKSPACE_TEST_CLEANUP_CWD="$cleanup_cwd_log" \
+  WORKSPACE_TEST_CLEANUP_ARGS="$cleanup_args_log" \
+  sh -c "$cleanup_command"
+assert_equal "upgraded cleanup runs inside the quoted Codex worktree" "$(cd "$cleanup_worktree" && pwd -P)" "$(cat "$cleanup_cwd_log")"
+assert_equal "upgraded cleanup invokes archive through the worktree shim" "archive" "$(cat "$cleanup_args_log")"
+cleanup_count=$(grep -c '^\[cleanup\]$' .codex/environments/environment.toml)
+assert_equal "legacy Workspace cleanup table is not duplicated" "1" "$cleanup_count"
+
+# Workspace briefly generated a cleanup command that required
+# CODEX_WORKTREE_PATH. Current Codex cleanup omits that setup-only variable, so
+# the exact generated command must upgrade to the linked-worktree fallback.
+app_dir=$(create_fake_app "init-upgrade-path-required-codex-cleanup")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+[cleanup]
+script = "if [ -z \"${CODEX_WORKTREE_PATH:-}\" ]; then echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not set\" >&2; exit 1; fi; if [ ! -d \"$CODEX_WORKTREE_PATH\" ]; then echo \"Workspace cleanup: CODEX_WORKTREE_PATH is not a directory: $CODEX_WORKTREE_PATH\" >&2; exit 1; fi; cd \"$CODEX_WORKTREE_PATH\" || exit 1; if [ ! -x bin/workspace ]; then echo \"Workspace cleanup: bin/workspace is missing or not executable in $CODEX_WORKTREE_PATH\" >&2; exit 1; fi; exec bin/workspace archive"
+EOF
+
+run_init
+
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+assert_true "path-required Workspace cleanup is upgraded" sh -c 'case "$1" in *"git rev-parse --show-toplevel"*"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+assert_false "upgraded cleanup no longer requires CODEX_WORKTREE_PATH" sh -c 'case "$1" in *"CODEX_WORKTREE_PATH is not set\" >&2; exit 1"*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+
+# Inline comments are valid TOML and were emitted by some hand-audited copies
+# of the historical Workspace default. They do not make the default custom.
+app_dir=$(create_fake_app "init-upgrade-commented-codex-cleanup")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+[cleanup]
+script = "bin/workspace archive" # historical Workspace default
+EOF
+
+init_stderr="$TEST_TMP/init-commented-cleanup.stderr"
+sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>"$init_stderr"
+cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
+assert_true "commented legacy cleanup is upgraded" sh -c 'case "$1" in *"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
+assert_false "cleanup detection emits no Ruby regex warnings" grep -Eq "character class|warning:.*regexp" "$init_stderr"
+
+# A custom cleanup remains authoritative even when setup uses Workspace.
+app_dir=$(create_fake_app "init-preserve-custom-codex-cleanup")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+[cleanup]
+script = "bin/custom-cleanup"
+EOF
+
+run_init
+
+assert_true "Workspace setup preserves custom Codex cleanup" grep -q 'script = "bin/custom-cleanup"' .codex/environments/environment.toml
+cleanup_count=$(grep -c '^\[cleanup\]$' .codex/environments/environment.toml)
+assert_equal "custom Codex cleanup table is not duplicated" "1" "$cleanup_count"
+
+# Preserve TOML-valid cleanup tables that use comments or quoted keys.
+app_dir=$(create_fake_app "init-preserve-formatted-codex-cleanup")
+cd "$app_dir"
+mkdir -p .codex/environments
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+[cleanup] # project-owned cleanup
+script = "bin/commented-cleanup"
+EOF
+
+run_init
+
+assert_true "commented custom cleanup is preserved" grep -q 'script = "bin/commented-cleanup"' .codex/environments/environment.toml
+assert_equal "commented cleanup table is not duplicated" "1" "$(grep -Ec '^\[cleanup\]' .codex/environments/environment.toml)"
+
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+
+["cleanup"]
+script = "bin/quoted-cleanup"
+EOF
+
+run_init
+
+assert_true "quoted custom cleanup key is preserved" grep -q 'script = "bin/quoted-cleanup"' .codex/environments/environment.toml
+assert_false "quoted custom cleanup does not gain a bare cleanup table" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
+
+cat > .codex/environments/environment.toml <<'EOF'
+cleanup.script = "bin/dotted-custom-cleanup"
+
+[setup]
+script = "bin/workspace bootstrap"
+EOF
+
+run_init
+
+assert_true "dotted custom cleanup key is preserved" grep -q 'cleanup.script = "bin/dotted-custom-cleanup"' .codex/environments/environment.toml
+assert_false "dotted custom cleanup does not gain a table" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
+
+cat > .codex/environments/environment.toml <<'EOF'
+[setup]
+script = "bin/workspace bootstrap"
+cleanup.script = "bin/nested-cleanup"
+EOF
+
+run_init
+
+assert_true "nested cleanup setting remains unchanged" grep -q 'cleanup.script = "bin/nested-cleanup"' .codex/environments/environment.toml
+assert_true "nested cleanup setting does not suppress native cleanup" grep -q '^\[cleanup\]$' .codex/environments/environment.toml
 
 # ── init: rejects an unrelated bin/workspace before migration ───
 
@@ -357,9 +639,15 @@ mkdir -p .conductor
 linked_target="$TEST_TMP/shared-conductor.toml"
 printf '[scripts]\nsetup = "workspace bootstrap"\n' > "$linked_target"
 ln -s "$linked_target" .conductor/settings.toml
+mkdir -p .codex/environments
+linked_codex_target="$TEST_TMP/shared-codex-environment.toml"
+printf '[setup]\nscript = "bin/workspace bootstrap"\n' > "$linked_codex_target"
+ln -s "$linked_codex_target" .codex/environments/environment.toml
 run_init
 assert_true "linked provider config remains a symlink" [ -L .conductor/settings.toml ]
 assert_true "linked provider target remains unchanged" grep -q 'setup = "workspace bootstrap"' "$linked_target"
+assert_true "linked Codex environment remains a symlink" [ -L .codex/environments/environment.toml ]
+assert_false "linked Codex environment does not gain cleanup" grep -q '^\[cleanup\]$' "$linked_codex_target"
 
 app_dir=$(create_fake_app "init-temp-symlink")
 cd "$app_dir"

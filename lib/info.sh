@@ -18,7 +18,7 @@ fi
 
 resolve_workspace
 sanitize_workspace_name
-prefer_workspace_file
+resolve_workspace_identity
 detect_caddy
 detect_vite
 load_dotenv_defaults ./.env
@@ -28,13 +28,16 @@ if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   exit 1
 fi
 
-BASE_PORT=$(derive_workspace_port "3000")
-case "$BASE_PORT" in
-  *[!0-9]*) err "Port must be a number, got '$BASE_PORT'"; exit 1 ;;
-esac
+BASE_PORT=$(resolve_workspace_port "3000") || exit 1
 
 case "$WORKSPACE_PROVIDER" in
-  git) _provider="codex" ;;
+  git)
+    if is_codex_git_workspace; then
+      _provider="codex"
+    else
+      _provider="git"
+    fi
+    ;;
   "") _provider="default" ;;
   *) _provider="$WORKSPACE_PROVIDER" ;;
 esac
@@ -61,6 +64,7 @@ fi
 
 echo "Provider: $_provider"
 echo "Workspace: $_workspace_name"
+echo "Identity source: $WORKSPACE_IDENTITY_SOURCE"
 echo "Root: $_workspace_root"
 echo "Database suffix: $_workspace_suffix"
 echo "URL: $_workspace_url"

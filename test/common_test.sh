@@ -103,13 +103,13 @@ git -C "$git_worktree" switch -q -c codex-attached
 resolve_workspace
 assert_equal "branch-attached Codex worktree stays detected" "git" "$WORKSPACE_PROVIDER"
 
-# Branch-backed worktrees outside Codex retain their historical default state.
+# Branch-backed worktrees outside Codex receive the same generic isolation.
 manual_worktree="$TEST_TMP/manual-worktree"
 git -C "$git_root" worktree add -q -b manual-test "$manual_worktree"
 cd "$manual_worktree"
 resolve_workspace
-assert_equal "manual git worktree stays default" "" "$WORKSPACE_NAME"
-assert_equal "manual git worktree has no provider" "" "$WORKSPACE_PROVIDER"
+assert_equal "manual git worktree gets its Git identity" "manual-worktree" "$WORKSPACE_NAME"
+assert_equal "manual git worktree uses generic provider" "git" "$WORKSPACE_PROVIDER"
 
 # Existing provider variables retain priority even inside a Git worktree.
 cd "$git_worktree"
@@ -158,19 +158,30 @@ SUPERSET_WORKSPACE_NAME="-leading-"
 sanitize_workspace_name
 assert_equal "strip leading/trailing hyphens" "leading" "$WORKSPACE_NAME"
 
-# Truncated to at most 40 chars
+# Superset retains its historical 45-character database identity.
 SUPERSET_WORKSPACE_NAME="this-is-a-very-long-workspace-name-that-exceeds-forty-characters-limit"
 sanitize_workspace_name
 length=$(printf '%s' "$WORKSPACE_NAME" | wc -c | tr -d ' ')
-assert_true "truncate to <= 40 chars" [ "$length" -le 40 ]
-assert_true "truncated name is non-empty" [ "$length" -gt 0 ]
+assert_equal "Superset truncates to its historical 45 characters" "45" "$length"
+
+SUPERSET_WORKSPACE_NAME="123456789012345678901234567890123456789012345"
+sanitize_workspace_name
+assert_equal "exact 45-character Superset identity is preserved" "$SUPERSET_WORKSPACE_NAME" "$WORKSPACE_NAME"
+
+# Superconductor and generic Git worktrees keep Workspace's 40-character limit.
+SUPERCONDUCTOR_WORKSPACE_NAME="1234567890123456789012345678901234567890123456"
+sanitize_workspace_name
+length=$(printf '%s' "$WORKSPACE_NAME" | wc -c | tr -d ' ')
+assert_equal "Superconductor truncates to 40 characters" "40" "$length"
+unset SUPERCONDUCTOR_WORKSPACE_NAME
 
 # Trailing hyphen after truncation is stripped
-SUPERSET_WORKSPACE_NAME="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x"
+SUPERCONDUCTOR_WORKSPACE_NAME="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-x"
 sanitize_workspace_name
 length=$(printf '%s' "$WORKSPACE_NAME" | wc -c | tr -d ' ')
 last_char=$(printf '%s' "$WORKSPACE_NAME" | tail -c 1)
 assert_true "no trailing hyphen after truncate" [ "$last_char" != "-" ]
+unset SUPERCONDUCTOR_WORKSPACE_NAME
 
 # "default" skips sanitization
 SUPERSET_WORKSPACE_NAME="default"
@@ -189,51 +200,140 @@ assert_equal "conductor names not sanitized" "feat/weird-name" "$WORKSPACE_NAME"
 
 unset SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_WORKSPACE_NAME CONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
 
-# No file → WORKSPACE_NAME untouched
+# No marker or hook leaves the derived identity untouched.
 mkdir -p "$TEST_TMP/no-file" && cd "$TEST_TMP/no-file"
 WORKSPACE_NAME="from-env"
-prefer_workspace_file
+resolve_workspace_identity
 assert_equal "no file leaves name alone" "from-env" "$WORKSPACE_NAME"
 
-# Empty file → WORKSPACE_NAME untouched (don't clobber to empty)
-mkdir -p "$TEST_TMP/empty-file" && cd "$TEST_TMP/empty-file"
+# Provider/Git discovery owns the root/default decision. Stale sibling markers
+# and an adoption hook cannot turn the main checkout into an isolated one.
+mkdir -p "$TEST_TMP/root-identity/bin" && cd "$TEST_TMP/root-identity"
+printf '%s' "legacy-sibling" > .conductor-workspace
+printf '%s' "workspace-sibling" > .workspace
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+touch .identity-hook-called
+printf '%s' "hook-sibling"
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME=""
+WORKSPACE_INVALID_NAME=""
+resolve_workspace_identity
+assert_equal "root ignores stable workspace markers" "" "$WORKSPACE_NAME"
+assert_equal "root identity remains derived" "derived" "$WORKSPACE_IDENTITY_SOURCE"
+assert_false "root identity bypasses adoption hook" [ -f .identity-hook-called ]
+
+# An empty Workspace marker is invalid rather than silently re-keying.
+mkdir -p "$TEST_TMP/empty-workspace" && cd "$TEST_TMP/empty-workspace"
 : > .workspace
 WORKSPACE_NAME="from-env"
-prefer_workspace_file
-assert_equal "empty file leaves name alone" "from-env" "$WORKSPACE_NAME"
+assert_false "empty .workspace is rejected" resolve_workspace_identity
 
-# File present and matches env → no warning, name unchanged
+# Non-regular markers cannot be read or atomically replaced. Resolution rejects
+# them before bootstrap can run project setup or prepare databases.
+mkdir -p "$TEST_TMP/directory-workspace" && cd "$TEST_TMP/directory-workspace"
+mkdir .workspace
+WORKSPACE_NAME="from-env"
+assert_false "directory .workspace is rejected during resolution" resolve_workspace_identity
+assert_false "directory .workspace is rejected during persistence" write_workspace_identity
+assert_equal "directory .workspace remains empty" "" "$(find .workspace -mindepth 1 -maxdepth 1 -print)"
+
+mkdir -p "$TEST_TMP/directory-conductor" && cd "$TEST_TMP/directory-conductor"
+mkdir .conductor-workspace
+printf '%s' "workspace-fallback" > .workspace
+WORKSPACE_NAME="from-env"
+assert_false "directory .conductor-workspace is rejected during resolution" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/linked-conductor" && cd "$TEST_TMP/linked-conductor"
+printf '%s' "linked-conductor-name" > conductor-identity-target
+ln -s conductor-identity-target .conductor-workspace
+printf '%s' "workspace-fallback" > .workspace
+WORKSPACE_NAME="from-env"
+assert_false "linked .conductor-workspace is rejected during resolution" resolve_workspace_identity
+
+# A matching marker produces no warning.
 mkdir -p "$TEST_TMP/match" && cd "$TEST_TMP/match"
 printf '%s' "atlanta" > .workspace
 WORKSPACE_NAME="atlanta"
-prefer_workspace_file >"$TEST_TMP/out" 2>&1
+resolve_workspace_identity >"$TEST_TMP/out" 2>&1
 assert_equal "matching file keeps name" "atlanta" "$WORKSPACE_NAME"
 assert_false "no warning when matching" [ -s "$TEST_TMP/out" ]
 
-# File present and differs from env → warn + file wins
+# Workspace's marker wins over a drifted provider identity.
 mkdir -p "$TEST_TMP/drift" && cd "$TEST_TMP/drift"
 printf '%s' "atlanta" > .workspace
 WORKSPACE_NAME="some-drifted-name"
-prefer_workspace_file >"$TEST_TMP/out" 2>&1
+resolve_workspace_identity >"$TEST_TMP/out" 2>&1
 assert_equal "file wins over drifted env" "atlanta" "$WORKSPACE_NAME"
 assert_true "warns on drift" grep -q "drift" "$TEST_TMP/out"
 
-# File present and env empty → file wins, no warning (no drift to report)
-mkdir -p "$TEST_TMP/env-empty" && cd "$TEST_TMP/env-empty"
-printf '%s' "atlanta" > .workspace
-WORKSPACE_NAME=""
-prefer_workspace_file >"$TEST_TMP/out" 2>&1
-assert_equal "file used when env empty" "atlanta" "$WORKSPACE_NAME"
-assert_false "no warning when env empty" [ -s "$TEST_TMP/out" ]
+# Existing Conductor identity is the highest authority during migration.
+mkdir -p "$TEST_TMP/conductor-marker" && cd "$TEST_TMP/conductor-marker"
+printf '%s' "workspace-value" > .workspace
+printf '%s' "legacy-database" > .conductor-workspace
+WORKSPACE_NAME="provider-value"
+resolve_workspace_identity >"$TEST_TMP/out" 2>&1
+assert_equal "Conductor marker wins over Workspace and provider" "legacy-database" "$WORKSPACE_NAME"
+assert_equal "Conductor marker source recorded" ".conductor-workspace" "$WORKSPACE_IDENTITY_SOURCE"
 
-# A valid authoritative file clears a stale invalid provider-derived identity.
-mkdir -p "$TEST_TMP/invalid-env-valid-file" && cd "$TEST_TMP/invalid-env-valid-file"
-printf '%s' "atlanta" > .workspace
-WORKSPACE_NAME=""
-WORKSPACE_INVALID_NAME=1
-prefer_workspace_file
-assert_equal "valid file replaces invalid provider identity" "atlanta" "$WORKSPACE_NAME"
-assert_equal "valid file clears invalid-name state" "" "$WORKSPACE_INVALID_NAME"
+# An empty legacy marker was historically unpinned and defers to Workspace.
+mkdir -p "$TEST_TMP/empty-conductor" && cd "$TEST_TMP/empty-conductor"
+: > .conductor-workspace
+printf '%s' "workspace-value" > .workspace
+WORKSPACE_NAME="provider-value"
+resolve_workspace_identity >/dev/null 2>&1
+assert_equal "empty legacy marker defers to Workspace" "workspace-value" "$WORKSPACE_NAME"
+
+# A project hook can supply its established identity until Workspace pins it.
+mkdir -p "$TEST_TMP/identity-hook/bin" && cd "$TEST_TMP/identity-hook"
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf '%s' "stable-git-id"
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME="provider-display-name"
+WORKSPACE_PROVIDER="conductor"
+WORKSPACE_ROOT_PATH="/provider/root"
+resolve_workspace_identity >"$TEST_TMP/out" 2>&1
+assert_equal "identity hook overrides provider display name" "stable-git-id" "$WORKSPACE_NAME"
+assert_equal "identity hook source recorded" "bin/workspace-identity-hook" "$WORKSPACE_IDENTITY_SOURCE"
+
+printf '%s' "pinned-name" > .workspace
+WORKSPACE_NAME="new-provider-name"
+resolve_workspace_identity >"$TEST_TMP/out" 2>&1
+assert_equal "Workspace marker prevents hook from re-keying" "pinned-name" "$WORKSPACE_NAME"
+
+# Invalid persisted or hook identities fail instead of choosing another DB.
+mkdir -p "$TEST_TMP/multiline-identity" && cd "$TEST_TMP/multiline-identity"
+printf 'first\nsecond\n' > .workspace
+WORKSPACE_NAME="provider-value"
+assert_false "multiline .workspace is rejected" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/control-identity" && cd "$TEST_TMP/control-identity"
+printf 'bad\tidentity' > .workspace
+WORKSPACE_NAME="provider-value"
+assert_false "control characters in .workspace are rejected" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/control-identity-hook/bin" && cd "$TEST_TMP/control-identity-hook"
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'bad\033identity'
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME="provider-value"
+WORKSPACE_PROVIDER="conductor"
+WORKSPACE_ROOT_PATH="/provider/root"
+assert_false "control characters in identity hook output are rejected" resolve_workspace_identity
+
+mkdir -p "$TEST_TMP/failing-identity-hook/bin" && cd "$TEST_TMP/failing-identity-hook"
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+exit 42
+SCRIPT
+chmod +x bin/workspace-identity-hook
+WORKSPACE_NAME="provider-value"
+assert_false "failing identity hook aborts resolution" resolve_workspace_identity
 
 cd "$TEST_DIR"
 

@@ -6,7 +6,7 @@
 #   2. If default/main branch: run the app's ordinary setup script and exit
 #   3. Sanitize workspace name (superset names only)
 #   4. Symlink shared files from root
-#   5. Export WORKSPACE_DB_SUFFIX
+#   5. Export WORKSPACE_DB_SUFFIX and reserve ports
 #   6. Materialize and patch database.yml when possible
 #   7. Run bin/workspace-setup-hook, or fall back to the app setup script
 #      when the dedicated hook is absent, then patch generated config
@@ -36,11 +36,12 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 resolve_workspace
 sanitize_workspace_name
+resolve_workspace_identity
 detect_app_name
 detect_setup_script
 
-# Reconcile resources from any Codex-managed worktrees removed since the last
-# lifecycle event, without adding work for existing providers or empty repos.
+# Recover resources from Git worktrees whose normal archive path was skipped or
+# interrupted, without adding work for existing providers or empty repos.
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
   sh "$WORKSPACE_LIB/prune.sh" --quiet
@@ -185,15 +186,28 @@ fi
 
 # ── Source .env for setup scripts ────────────────────────────────
 
-if [ -f .env ]; then
-  set -a
-  . ./.env
-  set +a
-fi
+# App defaults may contribute values such as ports, but cannot replace the
+# provider, root, or stable database identity already resolved above.
+load_dotenv_defaults ./.env
 
 # ── Export workspace DB env vars ─────────────────────────────────
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+
+# Validate and publish the port reservation before project hooks or database
+# work. If bootstrap later fails, the record lets prune clean up any resources
+# already created after an external manager removes the worktree.
+_workspace_port=$(resolve_workspace_port "") || exit 1
+if [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  _workspace_port=$(select_available_workspace_port "$_workspace_port") || {
+    err "Could not reserve workspace ports"
+    exit 1
+  }
+  register_workspace "$_workspace_port" || {
+    err "Could not register workspace"
+    exit 1
+  }
+fi
 
 # ── Materialize and patch DB config before project setup ─────────
 
@@ -227,10 +241,8 @@ create_workspace_databases
 
 # ── Write .workspace file ────────────────────────────────────────
 
-printf '%s' "$WORKSPACE_NAME" > .workspace
+write_workspace_identity
 ok "Wrote .workspace file"
-
-register_workspace "$(derive_workspace_port "")"
 
 # ── Run bootstrap hook ───────────────────────────────────────────
 

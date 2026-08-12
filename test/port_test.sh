@@ -5,12 +5,17 @@ cd "$(dirname "$0")"
 . ./test_helper.sh
 
 # Clear any env vars from the host environment
-unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
+unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH SUPERCONDUCTOR_PORT 2>/dev/null || true
+unset SUPERSET_PORT WORKSPACE_PORT 2>/dev/null || true
 
 # ── Port derivation helper (extracted from run.sh) ───────────────
 
 derive_port() {
   derive_workspace_port "3000"
+}
+
+resolve_port() {
+  resolve_workspace_port "3000"
 }
 
 # CONDUCTOR_PORT takes precedence
@@ -19,8 +24,23 @@ SUPERSET_WORKSPACE_NAME="some-branch"
 result=$(derive_port)
 assert_equal "CONDUCTOR_PORT takes precedence" "4000" "$result"
 
+# Generic and newer manager variables are honored when provided.
+WORKSPACE_PORT=3900
+SUPERCONDUCTOR_PORT=3950
+SUPERSET_PORT=3975
+result=$(derive_port)
+assert_equal "WORKSPACE_PORT takes precedence over providers" "3900" "$result"
+
+unset WORKSPACE_PORT
+result=$(derive_port)
+assert_equal "SUPERCONDUCTOR_PORT takes precedence" "3950" "$result"
+
+unset SUPERCONDUCTOR_PORT
+result=$(derive_port)
+assert_equal "SUPERSET_PORT is honored" "3975" "$result"
+
 # Superset workspace name derives port
-unset CONDUCTOR_PORT
+unset CONDUCTOR_PORT SUPERSET_PORT
 SUPERSET_WORKSPACE_NAME="my-feature"
 result=$(derive_port)
 assert_true "derived port >= 50000" [ "$result" -ge 50000 ]
@@ -63,11 +83,11 @@ result=$(derive_port)
 assert_true "git worktree named default gets isolated port" [ "$result" -ge 50000 ]
 assert_true "git worktree named default avoids port 3000" [ "$result" -ne 3000 ]
 
-# Conductor without CONDUCTOR_PORT keeps its historical default behavior.
+# Conductor without an assigned port receives a deterministic isolated range.
 WORKSPACE_NAME="conductor-feature"
 WORKSPACE_PROVIDER="conductor"
 result=$(derive_port)
-assert_equal "conductor without port keeps default" "3000" "$result"
+assert_true "conductor without port gets isolated range" [ "$result" -ge 50000 ]
 
 # Port is multiple of 10 (for 10-port block allocation)
 SUPERSET_WORKSPACE_NAME="test-port-alignment"
@@ -76,6 +96,22 @@ WORKSPACE_PROVIDER="superset"
 result=$(derive_port)
 remainder=$((result % 10))
 assert_equal "port is multiple of 10" "0" "$remainder"
+
+# The entire 10-port block must fit in the TCP range before registration or
+# arithmetic. Valid inputs are normalized to decimal.
+unset SUPERCONDUCTOR_PORT SUPERSET_PORT CONDUCTOR_PORT
+WORKSPACE_PORT=65526
+assert_equal "highest valid explicit base is accepted" "65526" "$(resolve_port)"
+WORKSPACE_PORT=00008
+assert_equal "explicit base is normalized to decimal" "8" "$(resolve_port)"
+WORKSPACE_PORT=0
+assert_false "zero base is rejected" resolve_port >/dev/null 2>&1
+WORKSPACE_PORT=65535
+assert_false "overflowing explicit block is rejected" resolve_port >/dev/null 2>&1
+unset WORKSPACE_PORT
+CONDUCTOR_PORT=65535
+assert_false "overflowing provider block is rejected" resolve_port >/dev/null 2>&1
+unset CONDUCTOR_PORT
 
 # ── Port export logic (caddy vs non-caddy) ───────────────────────
 
