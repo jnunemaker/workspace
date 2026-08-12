@@ -129,8 +129,11 @@ _codex_cleanup_is_configured() {
     File.foreach(ARGV.fetch(0)) do |line|
       value = line.sub(/[ \t]*#.*$/, "").strip
       key = /(?:cleanup|"cleanup"|\047cleanup\047)/
-      if value.match?(/\A\[\[?.*\]\]?\z/)
-        exit 0 if value.match?(/\A\[[ \t]*#{key}(?:[ \t]*\.[^\]]+)?[ \t]*\]\z/)
+      if value.start_with?("[") && value.end_with?("]")
+        unless value.start_with?("[[") || value[-2, 2] == "]]"
+          table_name = value[1...-1].strip
+          exit 0 if table_name.match?(/\A#{key}(?:[ \t]*\..+)?\z/)
+        end
         inside_table = true
         next
       end
