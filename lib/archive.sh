@@ -55,7 +55,14 @@ header "Archiving workspace: $WORKSPACE_NAME"
 
 # Match run and info when a non-Git provider stores WORKSPACE_PORT in the
 # linked dotenv file. Registry-entry cleanup still uses its recorded port.
+set +e
 load_dotenv_defaults ./.env
+_dotenv_status=$?
+set -e
+if [ "$_dotenv_status" -ne 0 ]; then
+  err "Could not load .env — archive stopped before cleanup"
+  exit 1
+fi
 
 # ── Port derivation (same logic as run) ──────────────────────────
 

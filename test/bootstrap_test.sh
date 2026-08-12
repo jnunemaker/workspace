@@ -104,7 +104,12 @@ app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/dedicated-setup-hook.log"
 cd "$app_dir"
-printf 'shared=true\n' > "$root_dir/.env"
+cat > "$root_dir/.env" <<'ENV'
+shared=true
+WORKSPACE_NAME=wrong-dotenv-identity
+WORKSPACE_PROVIDER=wrong-dotenv-provider
+WORKSPACE_ROOT_PATH=/wrong/dotenv/root
+ENV
 cat > config/database.yml <<'YAML'
 development:
   database: hook_development

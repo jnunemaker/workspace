@@ -10,6 +10,7 @@ install_workspace_suffix_helper() {
   local _database_patch_mode="${1:-helper}"
   WORKSPACE_DATABASE_PATCH_MODE="$_database_patch_mode" ruby -e '
     require "tempfile"
+    require "yaml"
 
     def atomic_replace(path, content)
       mode = File.stat(path).mode & 0o7777
@@ -29,6 +30,17 @@ install_workspace_suffix_helper() {
         temporary.close unless temporary.closed?
         File.unlink(temporary_path) if !replaced && File.exist?(temporary_path)
       end
+    end
+
+    def workspace_database_base(token)
+      value = YAML.safe_load(token, permitted_classes: [], aliases: false)
+      raise "database name must be a YAML string scalar" unless value.is_a?(String)
+      value
+    end
+
+    def workspace_database_argument(token)
+      dynamic = token.match(/\A<%=\s*(.*?)\s*%>\z/m)
+      dynamic ? dynamic[1] : workspace_database_base(token).dump
     end
 
     path = "config/database.yml"
@@ -79,7 +91,7 @@ install_workspace_suffix_helper() {
           workspace_identity_path
         end
         if !workspace_db_suffix && identity_path
-          workspace_name = File.read(identity_path).sub(/\n+\z/, "")
+          workspace_name = File.read(identity_path).sub(/\\n+\\z/, "")
           if workspace_name.empty? || workspace_name == "default" || workspace_name.match?(/[[:cntrl:]]/)
             raise "Invalid \#{File.basename(identity_path)} identity"
           end
@@ -108,8 +120,9 @@ install_workspace_suffix_helper() {
         end
 
         if (env == "development" || env == "test") && !line.include?("<%") &&
-          (match = line.match(/\A(\s+database:\s*)(\S+)\s*$/))
-          "#{match[1]}<%= workspace_database_name.call(#{match[2].dump}) %>\n"
+          (match = line.match(/\A(\s+database:\s*)(.+?)\s*$/))
+          database_base = workspace_database_base(match[2])
+          "#{match[1]}<%= workspace_database_name.call(#{database_base.dump}) %>\n"
         else
           line
         end
@@ -119,12 +132,15 @@ install_workspace_suffix_helper() {
     content.gsub!(/<%=\s*ENV\[(["'\'' ])WORKSPACE_DB_SUFFIX\1\]\s*%>/, "<%= workspace_db_suffix %>")
 
     content = content.lines.map do |line|
-      if (match = line.match(/\A(\s*database:\s*)([^<\s]+)<%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*\|\|\s*workspace_db_suffix\s*%>\s*$/))
-        "#{match[1]}<%= workspace_database_name.call(#{match[2].dump}, ENV[#{match[4].dump}] || workspace_db_suffix) %>\n"
-      elsif (match = line.match(/\A(\s*database:\s*)([^<\s]+)<%=\s*workspace_db_suffix\s*%><%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*%>\s*$/))
-        "#{match[1]}<%= workspace_database_name.call(#{match[2].dump}, workspace_db_suffix + ENV[#{match[4].dump}].to_s) %>\n"
-      elsif (match = line.match(/\A(\s*database:\s*)([^<\s]+)<%=\s*workspace_db_suffix\s*%>\s*$/))
-        "#{match[1]}<%= workspace_database_name.call(#{match[2].dump}) %>\n"
+      if (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*\|\|\s*workspace_db_suffix\s*%>\s*$/))
+        database_argument = workspace_database_argument(match[2].strip)
+        "#{match[1]}<%= workspace_database_name.call(#{database_argument}, ENV[#{match[4].dump}] || workspace_db_suffix) %>\n"
+      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_db_suffix\s*%><%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*%>\s*$/))
+        database_argument = workspace_database_argument(match[2].strip)
+        "#{match[1]}<%= workspace_database_name.call(#{database_argument}, workspace_db_suffix + ENV[#{match[4].dump}].to_s) %>\n"
+      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_db_suffix\s*%>\s*$/))
+        database_argument = workspace_database_argument(match[2].strip)
+        "#{match[1]}<%= workspace_database_name.call(#{database_argument}) %>\n"
       else
         line
       end

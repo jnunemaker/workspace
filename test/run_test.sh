@@ -12,6 +12,16 @@ exit 1
 SCRIPT
 chmod +x "$fake_bin/lsof"
 
+# Help must stay available without evaluating project state or a failing .env.
+help_app=$(create_fake_app "run-help")
+cd "$help_app"
+cat > .env <<'ENV'
+false
+ENV
+help_output="$TEST_TMP/run-help.out"
+assert_true "run help succeeds without sourcing a failing dotenv" sh "$WORKSPACE_HOME/lib/run.sh" --help >"$help_output" 2>&1
+assert_true "run help prints usage" grep -q '^Usage: workspace run$' "$help_output"
+
 make_run_app() {
   app_dir=$(create_fake_app "$1")
   root_dir=$(create_fake_root "$1")
@@ -73,16 +83,26 @@ paths=$(make_run_app "dotenv-workspace-port")
 app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/dotenv-workspace-port.log"
-printf 'WORKSPACE_PORT=51500\n' > "$app_dir/.env"
+cat > "$app_dir/.env" <<'ENV'
+WORKSPACE_PORT=51500
+WORKSPACE_NAME=wrong-dotenv-identity
+WORKSPACE_PROVIDER=wrong-dotenv-provider
+WORKSPACE_ROOT_PATH=/wrong/dotenv/root
+ENV
+printf '%s' "stable-dotenv-identity" > "$app_dir/.conductor-workspace"
 cd "$app_dir"
 info_output=$(CONDUCTOR_ROOT_PATH="$root_dir" \
-  CONDUCTOR_WORKSPACE_NAME="dotenv-port-workspace" \
+  CONDUCTOR_WORKSPACE_NAME="renamed-dotenv-workspace" \
   sh "$WORKSPACE_HOME/lib/info.sh")
 PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
-  CONDUCTOR_WORKSPACE_NAME="dotenv-port-workspace" \
+  CONDUCTOR_WORKSPACE_NAME="renamed-dotenv-workspace" \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_true "info resolves dotenv workspace port" sh -c 'printf "%s\n" "$1" | grep -q "^Ports: 51500-51509$"' sh "$info_output"
 assert_true "run uses the same dotenv workspace port" grep -q '^PORT=51500$' "$log"
+assert_true "info preserves marker identity across dotenv loading" sh -c 'printf "%s\n" "$1" | grep -q "^Workspace: stable-dotenv-identity$"' sh "$info_output"
+assert_true "info preserves provider across dotenv loading" sh -c 'printf "%s\n" "$1" | grep -q "^Provider: conductor$"' sh "$info_output"
+assert_true "info preserves root across dotenv loading" sh -c 'printf "%s\n" "$1" | grep -q "^Root: $2$"' sh "$info_output" "$root_dir"
+assert_true "run preserves marker identity across dotenv loading" grep -q '^WORKSPACE_DB_SUFFIX=_stable-dotenv-identity$' "$log"
 
 archive_bin="$TEST_TMP/archive-bin"
 archive_lsof_log="$TEST_TMP/archive-lsof.log"
@@ -109,6 +129,25 @@ assert_equal "archive honors dotenv workspace port block" "10" "$(wc -l < "$arch
 assert_true "archive starts dotenv port sweep at the explicit base" grep -q -- '-ti :51500' "$archive_lsof_log"
 assert_true "archive ends dotenv port sweep at the block boundary" grep -q -- '-ti :51509' "$archive_lsof_log"
 assert_true "archive database cleanup uses authoritative Conductor identity" grep -q '^development:_stable-archive-name:db:drop$' "$archive_rails_log"
+
+# A malformed or failing dotenv must stop archive before partial environment
+# values can reach hooks, port sweeps, or database cleanup. A Git registry entry
+# remains available for a later safe recovery attempt.
+failing_archive_output="$TEST_TMP/failing-archive.out"
+: > "$archive_rails_log"
+: > "$archive_lsof_log"
+cat > .env <<'ENV'
+WORKSPACE_NAME=wrong-partial-identity
+WORKSPACE_PROVIDER=wrong-partial-provider
+WORKSPACE_ROOT_PATH=/wrong/partial/root
+WORKSPACE_PORT=65535
+DATABASE_URL=postgres://wrong-partial.example.test/wrong
+false
+ENV
+assert_false "archive fails when dotenv loading fails" env PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="renamed-provider-workspace" CONDUCTOR_PORT=51600 WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" sh "$WORKSPACE_HOME/lib/archive.sh" >"$failing_archive_output" 2>&1
+assert_true "archive explains dotenv failure" grep -q 'Could not load .env.*archive stopped before cleanup' "$failing_archive_output"
+assert_equal "failed dotenv reaches no database command" "" "$(cat "$archive_rails_log")"
+assert_equal "failed dotenv reaches no port sweep" "" "$(cat "$archive_lsof_log")"
 
 # Without an override, preserve the historical generic URL.
 paths=$(make_run_app "url-fallback")

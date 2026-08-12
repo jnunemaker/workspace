@@ -40,8 +40,8 @@ resolve_workspace_identity
 detect_app_name
 detect_setup_script
 
-# Reconcile resources from any Codex-managed worktrees removed since the last
-# lifecycle event, without adding work for existing providers or empty repos.
+# Recover resources from Git worktrees whose normal archive path was skipped or
+# interrupted, without adding work for existing providers or empty repos.
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
   sh "$WORKSPACE_LIB/prune.sh" --quiet
@@ -186,23 +186,25 @@ fi
 
 # ── Source .env for setup scripts ────────────────────────────────
 
-if [ -f .env ]; then
-  set -a
-  . ./.env
-  set +a
-fi
+# App defaults may contribute values such as ports, but cannot replace the
+# provider, root, or stable database identity already resolved above.
+load_dotenv_defaults ./.env
 
 # ── Export workspace DB env vars ─────────────────────────────────
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
-# Validate port input before project hooks or database work. Git bootstraps
-# already hold the registry lock, so selecting the collision-free block here
-# reserves it without publishing a record for a bootstrap that later fails.
+# Validate and publish the port reservation before project hooks or database
+# work. If bootstrap later fails, the record lets prune clean up any resources
+# already created after an external manager removes the worktree.
 _workspace_port=$(resolve_workspace_port "") || exit 1
 if [ "$WORKSPACE_PROVIDER" = "git" ]; then
   _workspace_port=$(select_available_workspace_port "$_workspace_port") || {
     err "Could not reserve workspace ports"
+    exit 1
+  }
+  register_workspace "$_workspace_port" || {
+    err "Could not register workspace"
     exit 1
   }
 fi
@@ -241,8 +243,6 @@ create_workspace_databases
 
 write_workspace_identity
 ok "Wrote .workspace file"
-
-register_workspace "$_workspace_port"
 
 # ── Run bootstrap hook ───────────────────────────────────────────
 

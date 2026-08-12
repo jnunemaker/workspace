@@ -19,6 +19,17 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/detect.sh"
 . "$WORKSPACE_LIB/registry.sh"
 
+# Help is a read-only command. Return before project detection or dotenv
+# sourcing so a broken checkout cannot prevent the usage text from rendering.
+[ "${1:-}" = "--help" -o "${1:-}" = "-h" ] && {
+  echo "Usage: workspace run"
+  echo ""
+  echo "Starts the dev server for a workspace."
+  echo "Ports use WORKSPACE_PORT or provider-assigned ports, then fall back to"
+  echo "the detected workspace name."
+  exit 0
+}
+
 resolve_workspace
 sanitize_workspace_name
 resolve_workspace_identity
@@ -36,19 +47,8 @@ if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   exit 1
 fi
 
-# ── Help ─────────────────────────────────────────────────────────
-
-[ "$1" = "--help" -o "$1" = "-h" ] && {
-  echo "Usage: workspace run"
-  echo ""
-  echo "Starts the dev server for a workspace."
-  echo "Ports use WORKSPACE_PORT or provider-assigned ports, then fall back to"
-  echo "the detected workspace name."
-  exit 0
-}
-
-# Reconcile resources from externally removed Git worktrees before starting a
-# new server, without adding work for existing providers or empty repos.
+# Recover resources from Git worktrees whose normal archive path was skipped or
+# interrupted, without adding work for existing providers or empty repos.
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
   sh "$WORKSPACE_LIB/prune.sh" --quiet

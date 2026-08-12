@@ -261,17 +261,92 @@ sanitize_workspace_name() {
 # Hooks sourced later may still deliberately override any value.
 load_dotenv_defaults() {
   local _dotenv_file _dotenv_existing_exports _dotenv_status
+  local _dotenv_workspace_name _dotenv_workspace_provider _dotenv_workspace_root_path
+  local _dotenv_workspace_git_common_dir _dotenv_workspace_git_root_path
+  local _dotenv_workspace_invalid_name _dotenv_workspace_identity_source
+  local _dotenv_workspace_port _dotenv_workspace_port_set
+  local _dotenv_superconductor_port _dotenv_superconductor_port_set
+  local _dotenv_superset_port _dotenv_superset_port_set
+  local _dotenv_conductor_port _dotenv_conductor_port_set
 
   _dotenv_file="${1:-.env}"
   [ -f "$_dotenv_file" ] || return 0
+
+  # These values are resolved lifecycle state, even when they were not
+  # exported by the provider. Dotenv may supply app defaults such as ports,
+  # but it must not redirect database or cleanup identity after validation.
+  _dotenv_workspace_name="$WORKSPACE_NAME"
+  _dotenv_workspace_provider="$WORKSPACE_PROVIDER"
+  _dotenv_workspace_root_path="$WORKSPACE_ROOT_PATH"
+  _dotenv_workspace_git_common_dir="$WORKSPACE_GIT_COMMON_DIR"
+  _dotenv_workspace_git_root_path="$WORKSPACE_GIT_ROOT_PATH"
+  _dotenv_workspace_invalid_name="${WORKSPACE_INVALID_NAME:-}"
+  _dotenv_workspace_identity_source="${WORKSPACE_IDENTITY_SOURCE:-}"
+  _dotenv_workspace_port="${WORKSPACE_PORT:-}"
+  _dotenv_workspace_port_set="${WORKSPACE_PORT+x}"
+  _dotenv_superconductor_port="${SUPERCONDUCTOR_PORT:-}"
+  _dotenv_superconductor_port_set="${SUPERCONDUCTOR_PORT+x}"
+  _dotenv_superset_port="${SUPERSET_PORT:-}"
+  _dotenv_superset_port_set="${SUPERSET_PORT+x}"
+  _dotenv_conductor_port="${CONDUCTOR_PORT:-}"
+  _dotenv_conductor_port_set="${CONDUCTOR_PORT+x}"
 
   _dotenv_existing_exports=$(export -p)
   set -a
   . "$_dotenv_file"
   _dotenv_status=$?
   set +a
-  [ "$_dotenv_status" -eq 0 ] || return "$_dotenv_status"
   eval "$_dotenv_existing_exports"
+
+  WORKSPACE_NAME="$_dotenv_workspace_name"
+  WORKSPACE_PROVIDER="$_dotenv_workspace_provider"
+  WORKSPACE_ROOT_PATH="$_dotenv_workspace_root_path"
+  WORKSPACE_GIT_COMMON_DIR="$_dotenv_workspace_git_common_dir"
+  WORKSPACE_GIT_ROOT_PATH="$_dotenv_workspace_git_root_path"
+  WORKSPACE_INVALID_NAME="$_dotenv_workspace_invalid_name"
+  WORKSPACE_IDENTITY_SOURCE="$_dotenv_workspace_identity_source"
+
+  # A failed source is not a usable set of defaults. Roll back every port input
+  # that can influence lifecycle cleanup instead of retaining partial values.
+  if [ "$_dotenv_status" -ne 0 ]; then
+    if [ -n "$_dotenv_workspace_port_set" ]; then
+      WORKSPACE_PORT="$_dotenv_workspace_port"; export WORKSPACE_PORT
+    else
+      unset WORKSPACE_PORT
+    fi
+    if [ -n "$_dotenv_superconductor_port_set" ]; then
+      SUPERCONDUCTOR_PORT="$_dotenv_superconductor_port"; export SUPERCONDUCTOR_PORT
+    else
+      unset SUPERCONDUCTOR_PORT
+    fi
+    if [ -n "$_dotenv_superset_port_set" ]; then
+      SUPERSET_PORT="$_dotenv_superset_port"; export SUPERSET_PORT
+    else
+      unset SUPERSET_PORT
+    fi
+    if [ -n "$_dotenv_conductor_port_set" ]; then
+      CONDUCTOR_PORT="$_dotenv_conductor_port"; export CONDUCTOR_PORT
+    else
+      unset CONDUCTOR_PORT
+    fi
+  fi
+
+  return "$_dotenv_status"
+}
+
+is_codex_git_workspace() {
+  local _codex_home _codex_worktrees _git_worktree_path
+
+  [ "$WORKSPACE_PROVIDER" = "git" ] || return 1
+  _codex_home="${CODEX_HOME:-${HOME:-}/.codex}"
+  _codex_worktrees=$(canonical_git_path "$_codex_home/worktrees")
+  _git_worktree_path=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  _git_worktree_path=$(canonical_git_path "$_git_worktree_path")
+  [ -n "$_codex_worktrees" ] && [ -n "$_git_worktree_path" ] || return 1
+  case "$_git_worktree_path" in
+    "$_codex_worktrees"/*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # Validate and normalize a base port whose inclusive 10-port block must fit in

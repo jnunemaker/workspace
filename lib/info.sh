@@ -31,7 +31,13 @@ fi
 BASE_PORT=$(resolve_workspace_port "3000") || exit 1
 
 case "$WORKSPACE_PROVIDER" in
-  git) _provider="git" ;;
+  git)
+    if is_codex_git_workspace; then
+      _provider="codex"
+    else
+      _provider="git"
+    fi
+    ;;
   "") _provider="default" ;;
   *) _provider="$WORKSPACE_PROVIDER" ;;
 esac

@@ -103,7 +103,13 @@ git -C "$git_root" worktree add -q --detach "$git_worktree"
 git_root=$(cd "$git_root" && pwd -P)
 cd "$git_worktree"
 output=$(CODEX_HOME="$codex_home" sh "$WORKSPACE_HOME/lib/info.sh")
-assert_true "Git worktree info uses the generic provider label" output_has "$output" '^Provider: git$'
+assert_true "Codex worktree info preserves the Codex provider label" output_has "$output" '^Provider: codex$'
 assert_true "Git worktree info reports the main checkout as root" output_has "$output" "^Root: $git_root$"
+
+generic_worktree="$TEST_TMP/info-generic-worktree"
+git -C "$git_root" worktree add -q --detach "$generic_worktree"
+cd "$generic_worktree"
+output=$(CODEX_HOME="$codex_home" sh "$WORKSPACE_HOME/lib/info.sh")
+assert_true "generic Git worktree info uses the Git provider label" output_has "$output" '^Provider: git$'
 
 report "workspace info"

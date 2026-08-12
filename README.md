@@ -85,33 +85,42 @@ When those files do not already exist, `workspace init` creates
 `.codex/environments/environment.toml` with:
 
 - A setup script that runs `bin/workspace bootstrap` whenever Codex creates a worktree.
+- A native cleanup script that runs the disposable worktree's `bin/workspace archive` before Codex removes it. It prefers `CODEX_WORKTREE_PATH` when available; current Codex cleanup runs inside the worktree without exporting that setup-only variable, so Workspace verifies the current checkout is a linked Git worktree before using it.
 - **Run** and **Workspace info** actions that use `bin/workspace`.
 - An **Archive workspace** action for explicit manual teardown.
 
-It also creates a project-local `SessionEnd` hook in `.codex/hooks.json`. In
-existing Codex files, recognized Workspace commands are upgraded to use the
-shim and a missing **Workspace info** action is added; custom commands and
-linked configuration files are left unchanged. Codex
-does not distinguish an archived chat from an ordinary app close or idle
-session in that hook, so the hook never archives the current workspace
-directly. Instead, it schedules `workspace prune`, which waits for Git to
-confirm that Codex removed the worktree before killing its ports and dropping
-its databases.
+Native cleanup is the normal Codex teardown path, so archive failures remain
+visible instead of being reported as successful cleanup. In existing Codex
+files, recognized Workspace commands are upgraded to use the shim, a missing
+native cleanup is added, and a missing **Workspace info** action is added.
+Exact older Workspace cleanup defaults are upgraded; custom cleanup commands
+and linked configuration files are left unchanged.
+
+`workspace init` also keeps a project-local `SessionEnd` hook in
+`.codex/hooks.json` as recovery for older Codex versions, interrupted cleanup,
+forced worktree deletion, and app shutdown. SessionEnd does not distinguish an
+archived chat from an ordinary app close or idle session, so it never archives
+the current checkout directly. It schedules `workspace prune --deferred`,
+which waits for Git to confirm that Codex removed the worktree before killing
+its ports and dropping its databases.
 
 After committing the generated `.codex` files, select the local environment in
 Codex when starting a worktree chat. Review and trust the project hook when
 Codex prompts; untrusted command hooks are skipped.
 
-Codex-managed worktrees do not provide the Conductor-style root/name variables.
-`workspace` recognizes every linked Git worktree and reads its stable identity
-and root through Git's shared metadata, including after a branch is attached.
-Superconductor, Superset, and Conductor variables always take precedence over
-Git detection.
+`CODEX_SOURCE_TREE_PATH` and `CODEX_WORKTREE_PATH` locate Codex checkouts when
+Codex provides them; they never construct `WORKSPACE_NAME` or
+`WORKSPACE_DB_SUFFIX`. Cleanup may instead use its verified linked-worktree
+working directory. In either case, the same provider-neutral identity resolver used by every other
+lifecycle command reads stable markers, hooks, provider variables, and Git
+metadata. Superconductor, Superset, and Conductor variables always take
+precedence over Git detection.
 
 Cleanup registrations live under the repository's shared Git directory at
 `.git/workspace/registry/`, so they survive deletion of the disposable
-worktree. Cleanup is also reconciled on the next `workspace bootstrap` or
-`workspace run` in case Codex was closed before its deferred hook completed.
+worktree. The registry, deferred SessionEnd prune, and reconciliation on the
+next `workspace bootstrap` or `workspace run` are recovery mechanisms when
+native cleanup could not complete.
 
 ## Hooks
 

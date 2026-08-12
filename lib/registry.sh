@@ -10,12 +10,36 @@ workspace_registry_root() {
 workspace_registry_entry() {
   _registry_root=$(workspace_registry_root) || return 1
   validate_workspace_identity "$WORKSPACE_NAME" "workspace registry identity" || return 1
+  _registry_hash=$(printf '%s' "$WORKSPACE_NAME" | git hash-object --stdin 2>/dev/null) || return 1
   case "$WORKSPACE_NAME" in
     *[!a-zA-Z0-9_-]*)
-      _registry_key=$(printf '%s' "$WORKSPACE_NAME" | git hash-object --stdin 2>/dev/null) || return 1
-      _registry_key="identity-$_registry_key"
+      # Keep an existing pre-encoding record addressable, but use a namespace
+      # that a literal safe identity cannot occupy for all new records.
+      _legacy_registry_entry="$_registry_root/identity-$_registry_hash.record"
+      if [ -f "$_legacy_registry_entry" ] && [ ! -L "$_legacy_registry_entry" ] &&
+        [ "$(sed -n '1p' "$_legacy_registry_entry")" = "$WORKSPACE_NAME" ]; then
+        printf '%s\n' "$_legacy_registry_entry"
+        return
+      fi
+      _registry_key="encoded.$_registry_hash"
       ;;
-    *) _registry_key="$WORKSPACE_NAME" ;;
+    *)
+      # A legacy encoded record may already occupy the literal name
+      # identity-<sha>. Keep both identities recoverable in that rare case.
+      _literal_collision_entry="$_registry_root/$WORKSPACE_NAME.record"
+      _literal_alternate_entry="$_registry_root/literal.$_registry_hash.record"
+      if [ -f "$_literal_alternate_entry" ] && [ ! -L "$_literal_alternate_entry" ] &&
+        [ "$(sed -n '1p' "$_literal_alternate_entry")" = "$WORKSPACE_NAME" ]; then
+        printf '%s\n' "$_literal_alternate_entry"
+        return
+      fi
+      if [ -f "$_literal_collision_entry" ] && [ ! -L "$_literal_collision_entry" ] &&
+        [ "$(sed -n '1p' "$_literal_collision_entry")" != "$WORKSPACE_NAME" ]; then
+        printf '%s\n' "$_literal_alternate_entry"
+        return
+      fi
+      _registry_key="$WORKSPACE_NAME"
+      ;;
   esac
   printf '%s/%s.record\n' "$_registry_root" "$_registry_key"
 }
@@ -159,7 +183,7 @@ register_workspace() {
   _registered_worktree=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
   _registry_temp="$_registry_root/.record.$$"
 
-  mkdir -p "$_registry_root"
+  mkdir -p "$_registry_root" || return 1
   _registry_lock_was_owned=0
   if workspace_registry_lock_owned; then
     _registry_lock_was_owned=1
@@ -174,13 +198,21 @@ register_workspace() {
     fi
   fi
 
-  {
+  if ! {
     printf '%s\n' "$WORKSPACE_NAME"
     printf '%s\n' "$WORKSPACE_ROOT_PATH"
     printf '%s\n' "$_registered_worktree"
     printf '%s\n' "$_registered_port"
-  } > "$_registry_temp"
-  mv "$_registry_temp" "$_registry_entry"
+  } > "$_registry_temp"; then
+    rm -f "$_registry_temp"
+    [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
+    return 1
+  fi
+  if ! mv "$_registry_temp" "$_registry_entry"; then
+    rm -f "$_registry_temp"
+    [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
+    return 1
+  fi
   [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
 }
 
