@@ -3,8 +3,8 @@
 # Sourced by bootstrap and archive subcommands.
 
 # Patch config/database.yml to support workspace-specific database names.
-# Lifecycle commands use WORKSPACE_DB_SUFFIX; ad-hoc Rails commands fall back
-# to the same stable marker precedence used by the lifecycle resolver.
+# Lifecycle commands use WORKSPACE_DB_SUFFIX; later Rails commands fall back
+# to the identity Workspace persisted in .workspace after bootstrap.
 # Idempotent — skips if already patched.
 install_workspace_suffix_helper() {
   local _database_patch_mode="${1:-helper}"
@@ -43,73 +43,32 @@ install_workspace_suffix_helper() {
       dynamic ? dynamic[1] : workspace_database_base(token).dump
     end
 
+    def workspace_database_expression(base, suffix = "workspace_suffix")
+      if base.start_with?(%q{"}) && base.end_with?(%q{"})
+        quoted = base.sub(/"\z/, %Q{\#{#{suffix}}"})
+        %Q{<%= JSON.generate(#{quoted}) %>}
+      else
+        %Q{<%= JSON.generate("\#{#{base}}\#{#{suffix}}") %>}
+      end
+    end
+
     path = "config/database.yml"
     content = File.read(path)
     helper = <<~ERB
       <%
         require "json"
-        require "open3"
-        workspace_identity_helper_version = 2
-        workspace_root = defined?(Rails) && Rails.respond_to?(:root) && Rails.root ? Rails.root : Dir.pwd
-        conductor_identity_path = File.expand_path(".conductor-workspace", workspace_root)
-        workspace_identity_path = File.expand_path(".workspace", workspace_root)
-
-        provider_keys = %w[
-          SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME
-          SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME
-          CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
-        ]
-        provider_present = provider_keys.any? { |key| ENV.key?(key) && !ENV[key].to_s.empty? }
-        provider_workspace_name = %w[
-          SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_WORKSPACE_NAME CONDUCTOR_WORKSPACE_NAME
-        ].map { |key| ENV[key] }.find { |name| name && !name.empty? }
-        provider_default = provider_present && (provider_workspace_name.nil? || provider_workspace_name == "default")
-
-        git_dir, git_status = Open3.capture2e("git", "-C", workspace_root.to_s, "rev-parse", "--git-dir")
-        git_common_dir, git_common_status = Open3.capture2e("git", "-C", workspace_root.to_s, "rev-parse", "--git-common-dir")
-        git_default = if git_status.success? && git_common_status.success?
-          File.expand_path(git_dir.strip, workspace_root.to_s) ==
-            File.expand_path(git_common_dir.strip, workspace_root.to_s)
-        else
-          true
-        end
-        default_checkout = provider_default || (!provider_present && git_default)
-
-        unless default_checkout
-          if File.symlink?(workspace_identity_path) || (File.exist?(workspace_identity_path) && !File.file?(workspace_identity_path))
-            raise "Invalid non-regular .workspace identity"
-          end
-          if File.symlink?(conductor_identity_path) || (File.exist?(conductor_identity_path) && !File.file?(conductor_identity_path))
-            raise "Invalid non-regular .conductor-workspace identity"
-          end
-        end
-
-        workspace_db_suffix = ENV["WORKSPACE_DB_SUFFIX"]
-        identity_path = if !default_checkout && File.file?(conductor_identity_path) && File.size?(conductor_identity_path)
-          conductor_identity_path
-        elsif !default_checkout && File.file?(workspace_identity_path)
-          workspace_identity_path
-        end
-        if !workspace_db_suffix && identity_path
-          workspace_name = File.read(identity_path).sub(/\\n+\\z/, "")
-          if workspace_name.empty? || workspace_name == "default" || workspace_name.match?(/[[:cntrl:]]/)
-            raise "Invalid \#{File.basename(identity_path)} identity"
-          end
-          workspace_db_suffix = "_\#{workspace_name}"
-        end
-        workspace_db_suffix ||= ""
-        workspace_database_name = ->(base, suffix = workspace_db_suffix) {
-          JSON.generate("\#{base}\#{suffix}")
-        }
+        workspace_file = Rails.root.join(".workspace")
+        workspace_suffix = ENV["WORKSPACE_DB_SUFFIX"] ||
+          (workspace_file.file? ? "_\#{workspace_file.read.strip}" : "")
       %>
     ERB
 
     case ENV["WORKSPACE_DATABASE_PATCH_MODE"]
     when "legacy_env"
-      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"DEV_ENV_NUMBER\"] || workspace_db_suffix %>")
-      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"TEST_ENV_NUMBER\"] || workspace_db_suffix %>")
-      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*%>/, "<%= workspace_db_suffix %><%= ENV[\"DEV_ENV_NUMBER\"] %>")
-      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*%>/, "<%= workspace_db_suffix %><%= ENV[\"TEST_ENV_NUMBER\"] %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"DEV_ENV_NUMBER\"] || workspace_suffix %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*\|\|\s*[a-zA-Z_]\w*\s*%>/, "<%= ENV[\"TEST_ENV_NUMBER\"] || workspace_suffix %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])DEV_ENV_NUMBER\1\]\s*%>/, "<%= workspace_suffix %><%= ENV[\"DEV_ENV_NUMBER\"] %>")
+      content.gsub!(/<%=\s*ENV\[(["'\'' ])TEST_ENV_NUMBER\1\]\s*%>/, "<%= workspace_suffix %><%= ENV[\"TEST_ENV_NUMBER\"] %>")
     when "plain_names"
       env = nil
       content = content.lines.map do |line|
@@ -122,35 +81,37 @@ install_workspace_suffix_helper() {
         if (env == "development" || env == "test") && !line.include?("<%") &&
           (match = line.match(/\A(\s+database:\s*)(.+?)\s*$/))
           database_base = workspace_database_base(match[2])
-          "#{match[1]}<%= workspace_database_name.call(#{database_base.dump}) %>\n"
+          "#{match[1]}#{workspace_database_expression(database_base.dump)}\n"
         else
           line
         end
       end.join
     end
 
-    content.gsub!(/<%=\s*ENV\[(["'\'' ])WORKSPACE_DB_SUFFIX\1\]\s*%>/, "<%= workspace_db_suffix %>")
+    content.gsub!(/<%=\s*ENV\[(["'\'' ])WORKSPACE_DB_SUFFIX\1\]\s*%>/, "<%= workspace_suffix %>")
 
     content = content.lines.map do |line|
-      if (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*\|\|\s*workspace_db_suffix\s*%>\s*$/))
+      if (match = line.match(/\A(\s*database:\s*)<%=\s*workspace_database_name\.call\((.*),\s*(ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\s*\|\|\s*workspace_(?:db_)?suffix|workspace_(?:db_)?suffix\s*\+\s*ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\.to_s)\)\s*%>\s*$/))
+        suffix = match[3].sub("workspace_db_suffix", "workspace_suffix")
+        "#{match[1]}#{workspace_database_expression(match[2], suffix)}\n"
+      elsif (match = line.match(/\A(\s*database:\s*)<%=\s*workspace_database_name\.call\((.*)\)\s*%>\s*$/))
+        "#{match[1]}#{workspace_database_expression(match[2])}\n"
+      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*\|\|\s*workspace_(?:db_)?suffix\s*%>\s*$/))
         database_argument = workspace_database_argument(match[2].strip)
-        "#{match[1]}<%= workspace_database_name.call(#{database_argument}, ENV[#{match[4].dump}] || workspace_db_suffix) %>\n"
-      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_db_suffix\s*%><%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*%>\s*$/))
+        "#{match[1]}#{workspace_database_expression(database_argument, "ENV[#{match[4].dump}] || workspace_suffix")}\n"
+      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_(?:db_)?suffix\s*%><%=\s*ENV\[(["'\''])(DEV_ENV_NUMBER|TEST_ENV_NUMBER)\3\]\s*%>\s*$/))
         database_argument = workspace_database_argument(match[2].strip)
-        "#{match[1]}<%= workspace_database_name.call(#{database_argument}, workspace_db_suffix + ENV[#{match[4].dump}].to_s) %>\n"
-      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_db_suffix\s*%>\s*$/))
+        "#{match[1]}#{workspace_database_expression(database_argument, "workspace_suffix + ENV[#{match[4].dump}].to_s")}\n"
+      elsif (match = line.match(/\A(\s*database:\s*)(.+?)<%=\s*workspace_(?:db_)?suffix\s*%>\s*$/))
         database_argument = workspace_database_argument(match[2].strip)
-        "#{match[1]}<%= workspace_database_name.call(#{database_argument}) %>\n"
+        "#{match[1]}#{workspace_database_expression(database_argument)}\n"
       else
         line
       end
     end.join
 
-    if content.include?("workspace_identity_path =")
-      content.sub!(/\A<%\n.*?workspace_identity_path =.*?^\s*%>\n/m, helper)
-    else
-      content = helper + content
-    end
+    helper_pattern = /\A<%\n(?:.*?workspace_identity_path\s*=|\s*require "json"\n\s*workspace_file = Rails\.root\.join\("\.workspace"\)).*?^\s*%>\n/m
+    content = helper + content unless content.sub!(helper_pattern, helper)
     atomic_replace(path, content)
   '
 }
@@ -163,15 +124,16 @@ patch_database_yml() {
     return
   fi
 
-  # Already uses the current stable-marker helper and quotes generated YAML.
-  if grep -q 'workspace_identity_helper_version = 2' "$db_yml" 2>/dev/null && \
-    grep -q 'workspace_database_name.call' "$db_yml" 2>/dev/null; then
+  # Already uses the simple persisted-marker helper and quotes generated YAML.
+  if grep -q 'workspace_file = Rails.root.join(".workspace")' "$db_yml" 2>/dev/null && \
+    grep -q 'workspace_suffix = ENV\["WORKSPACE_DB_SUFFIX"\] ||' "$db_yml" 2>/dev/null && \
+    grep -q 'workspace_file.file? ? "_#{workspace_file.read.strip}" : ""' "$db_yml" 2>/dev/null && \
+    grep -q 'JSON.generate' "$db_yml" 2>/dev/null; then
     step "database.yml already supports workspace isolation"
     return
   fi
 
-  # Upgrade a previous helper in place so root-checkout detection and YAML
-  # quoting stay aligned with current lifecycle commands.
+  # Upgrade a previous helper in place to the persisted .workspace contract.
   if grep -q 'workspace_identity_path =' "$db_yml" 2>/dev/null; then
     step "Upgrading stable workspace identity fallback in database.yml"
     install_workspace_suffix_helper || return 1
