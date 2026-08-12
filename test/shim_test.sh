@@ -39,9 +39,17 @@ assert_true "self-recursion fallback reaches workspace info" grep -q '^Provider:
 
 # A missing install produces a one-time actionable install command.
 output="$TEST_TMP/shim-missing.out"
-assert_false "shim fails cleanly when Workspace is missing" env PATH="/usr/bin:/bin" HOME="$TEST_TMP/empty-home" WORKSPACE_HOME="$TEST_TMP/missing-workspace" bin/workspace info >"$output" 2>&1
-assert_true "missing install message is friendly" grep -q '^Workspace is not installed\.$' "$output"
-assert_true "missing install message includes exact install command" grep -qF 'curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash' "$output"
+if env PATH="/usr/bin:/bin" HOME="$TEST_TMP/empty-home" WORKSPACE_HOME="$TEST_TMP/missing-workspace" bin/workspace info >"$output" 2>&1; then
+  missing_status=0
+else
+  missing_status=$?
+fi
+assert_equal "shim exits like a missing command when Workspace is missing" "127" "$missing_status"
+expected_missing_output='Workspace is not installed.
+Install it with:
+  curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash
+Then rerun this command.'
+assert_equal "missing install message gives steps in order" "$expected_missing_output" "$(cat "$output")"
 assert_false "missing install is not a shell command-not-found error" grep -qi 'command not found' "$output"
 
 # The committed minimum revision is enforced without downloading anything.

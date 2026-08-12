@@ -353,8 +353,9 @@ fi
 
 if [ -z "$_workspace_cli" ]; then
   echo "Workspace is not installed." >&2
-  echo "Install it once, then rerun this command:" >&2
+  echo "Install it with:" >&2
   echo "  curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash" >&2
+  echo "Then rerun this command." >&2
   exit 127
 fi
 
