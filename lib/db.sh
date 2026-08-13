@@ -91,7 +91,7 @@ install_workspace_suffix_helper() {
     content.gsub!(/<%=\s*ENV\[(["'\'' ])WORKSPACE_DB_SUFFIX\1\]\s*%>/, "<%= workspace_suffix %>")
 
     content = content.lines.map do |line|
-      if (match = line.match(/\A(\s*database:\s*)<%=\s*workspace_database_name\.call\((.*),\s*(ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\s*\|\|\s*workspace_(?:db_)?suffix|workspace_(?:db_)?suffix\s*\+\s*ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\.to_s)\)\s*%>\s*$/))
+      if (match = line.match(/\A(\s*database:\s*)<%=\s*workspace_database_name\.call\((.*),\s*(ENV\["WORKSPACE_DB_SUFFIX"\]\s*\|\|\s*ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\s*\|\|\s*workspace_(?:db_)?suffix|ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\s*\|\|\s*workspace_(?:db_)?suffix|workspace_(?:db_)?suffix\s*\+\s*ENV\["(?:DEV|TEST)_ENV_NUMBER"\]\.to_s)\)\s*%>\s*$/))
         suffix = match[3].sub("workspace_db_suffix", "workspace_suffix")
         "#{match[1]}#{workspace_database_expression(match[2], suffix)}\n"
       elsif (match = line.match(/\A(\s*database:\s*)<%=\s*workspace_database_name\.call\((.*)\)\s*%>\s*$/))

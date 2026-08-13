@@ -93,9 +93,9 @@ cat > config/database.yml <<'YAML'
   }
 %>
 development:
-  database: <%= workspace_database_name.call("myapp_development") %>
+  database: <%= workspace_database_name.call("infographics-dev", ENV["WORKSPACE_DB_SUFFIX"] || ENV["DEV_ENV_NUMBER"] || workspace_db_suffix) %>
 test:
-  database: <%= workspace_database_name.call("myapp_test", ENV["TEST_ENV_NUMBER"] || workspace_db_suffix) %>
+  database: <%= workspace_database_name.call(ENV["DB_NAME_PREFIX"] || "infographics-test", ENV["WORKSPACE_DB_SUFFIX"] || ENV["TEST_ENV_NUMBER"] || workspace_db_suffix) %>
 YAML
 
 patch_database_yml 2>/dev/null
@@ -104,15 +104,22 @@ rendered=$(render_database_yml)
 printf '%s' "$rendered" > "$upgraded_rendered_path"
 parsed_development=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("development").fetch("database")' "$upgraded_rendered_path")
 parsed_test=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("test").fetch("database")' "$upgraded_rendered_path")
-assert_equal "call-based helper uses persisted identity for development" "myapp_development_call-helper" "$parsed_development"
-assert_equal "call-based helper uses persisted identity for test" "myapp_test_call-helper" "$parsed_test"
+assert_equal "call-based helper uses persisted identity for development" "infographics-dev_call-helper" "$parsed_development"
+assert_equal "call-based helper uses persisted identity for test" "infographics-test_call-helper" "$parsed_test"
 
-rendered=$(WORKSPACE_DB_SUFFIX="_bootstrap" render_database_yml)
+rendered=$(DEV_ENV_NUMBER="_legacy-dev" TEST_ENV_NUMBER="_legacy-test" DB_NAME_PREFIX="custom-test" render_database_yml)
 printf '%s' "$rendered" > "$upgraded_rendered_path"
 parsed_development=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("development").fetch("database")' "$upgraded_rendered_path")
 parsed_test=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("test").fetch("database")' "$upgraded_rendered_path")
-assert_equal "call-based helper uses lifecycle identity for development" "myapp_development_bootstrap" "$parsed_development"
-assert_equal "call-based helper uses lifecycle identity for test" "myapp_test_bootstrap" "$parsed_test"
+assert_equal "call-based helper preserves the legacy development suffix" "infographics-dev_legacy-dev" "$parsed_development"
+assert_equal "call-based helper preserves the dynamic test prefix and legacy suffix" "custom-test_legacy-test" "$parsed_test"
+
+rendered=$(WORKSPACE_DB_SUFFIX="_bootstrap" DEV_ENV_NUMBER="_legacy-dev" TEST_ENV_NUMBER="_legacy-test" render_database_yml)
+printf '%s' "$rendered" > "$upgraded_rendered_path"
+parsed_development=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("development").fetch("database")' "$upgraded_rendered_path")
+parsed_test=$(ruby -ryaml -e 'puts YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true).fetch("test").fetch("database")' "$upgraded_rendered_path")
+assert_equal "Workspace lifecycle identity takes precedence for development" "infographics-dev_bootstrap" "$parsed_development"
+assert_equal "Workspace lifecycle identity takes precedence for test" "infographics-test_bootstrap" "$parsed_test"
 
 # Existing projects may derive the database base through ERB before appending
 # Workspace's suffix. Preserve that expression instead of quoting it as text.
