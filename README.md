@@ -12,6 +12,47 @@ curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.s
 
 Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 
+## Quick start
+
+Initialize each application from its root checkout:
+
+```sh
+cd ~/projects/myapp
+workspace init
+git status --short
+git diff
+# Repeat for every generated path marked ?? above, for example:
+git diff --no-index /dev/null bin/workspace
+```
+
+Review the generated shim, minimum-version contract, provider configuration,
+and `config/database.yml` changes. `git diff` omits untracked files, so inspect
+every `??` path separately with `git diff --no-index /dev/null path/from/status`
+(the command exits nonzero when it displays a difference). Add any
+project-specific lifecycle hooks the application needs, then stage and commit
+only the files you reviewed.
+
+From a sibling checkout created by a supported manager or `git worktree add`,
+use the committed project entrypoint for the normal lifecycle:
+
+```sh
+bin/workspace bootstrap
+bin/workspace info
+bin/workspace run
+
+# When the sibling is no longer needed:
+bin/workspace archive
+```
+
+Codex, Conductor, Superset, and Superconductor use the same `bin/workspace`
+entrypoint from their generated project configuration. The root checkout keeps
+using the application's ordinary `bin/setup`, `bin/update`, and `bin/dev`
+commands.
+
+A separate plain `git clone` is another root/default checkout. Sibling
+isolation requires an identity supplied by a supported manager or a linked Git
+worktree created with `git worktree add`.
+
 ## Commands
 
 | Command     | What it does                                                    |
@@ -22,12 +63,12 @@ Installs to `~/.workspace` and adds `~/.workspace/bin` to your `PATH`.
 | `archive`   | Tear down a workspace — kill processes, drop DBs                |
 | `info`      | Show provider, identity, URL, suffix, and allocated ports       |
 | `prune`     | Clean resources for Git worktrees removed by an external tool    |
-| `update`    | Pull the latest CLI from GitHub                                 |
+| `update`    | Pull the latest shared CLI and refresh the installed agent skill |
 | `version`   | Print the current version                                       |
 
 ## How it works
 
-Run `workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next to `myapp`) and it will:
+Run `bin/workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` next to `myapp`) and it will:
 
 1. Resolve one stable database identity from existing markers, a project hook, provider variables, or Git worktree metadata.
 2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
@@ -53,6 +94,36 @@ It never installs or updates Workspace automatically.
 
 Use `bin/workspace info` to see the provider, workspace name, root path,
 database suffix, application URL, and reserved 10-port block.
+
+## Updating Workspace
+
+From any initialized application, update the shared Workspace installation
+with:
+
+```sh
+bin/workspace update
+```
+
+This pulls the latest CLI and refreshes the installed Claude Code/Codex skill.
+It does not rewrite files in the application repository.
+
+When the application should adopt newer generated integration files, return to
+its root checkout and run:
+
+```sh
+workspace init
+git status --short
+git diff
+# Repeat for every generated path marked ?? above, for example:
+git diff --no-index /dev/null bin/workspace
+```
+
+`workspace init` refreshes Workspace-owned project files such as
+`bin/workspace`, `.workspace-version`, and recognized provider configuration;
+it may also update the database isolation patch. Review the complete diff and
+every untracked generated file, then commit only the intended changes. This
+refresh is explicit: updating your personal CLI does not require every
+application repository to change.
 
 ## Stable database identity
 
