@@ -81,7 +81,11 @@ case "${1:-}" in
     fi
     sh "$WORKSPACE_HOME/lib/install_skill.sh"
     NEW_VERSION=$(git -C "$WORKSPACE_HOME" log -1 --format="%h (%cs)" 2>/dev/null || echo "unknown")
-    echo "workspace updated to $NEW_VERSION"
+    if [ "$NEW_VERSION" = "$VERSION" ]; then
+      echo "workspace already up to date at $NEW_VERSION"
+    else
+      echo "workspace updated to $NEW_VERSION"
+    fi
     ;;
   version|--version|-v)
     echo "workspace $VERSION"
