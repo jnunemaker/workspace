@@ -71,7 +71,7 @@ case "${1:-}" in
     ;;
   update)
     shift
-    echo "Updating workspace CLI..."
+    echo "Checking for workspace CLI updates..."
     if [ -d "$WORKSPACE_HOME/.git" ]; then
       git -C "$WORKSPACE_HOME" pull origin main --quiet
     else

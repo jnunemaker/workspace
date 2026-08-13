@@ -40,12 +40,12 @@ new_version="2222222 (2026-08-13)"
 
 printf '%s\n' "$old_version" > "$git_state"
 output=$(PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$fake_workspace" FAKE_GIT_STATE="$git_state" UPDATE_INSTALL_MARKER="$install_marker" "$WORKSPACE_HOME/bin/workspace" update)
-expected="Updating workspace CLI...
+expected="Checking for workspace CLI updates...
 workspace already up to date at $old_version"
 assert_equal "unchanged update reports already up to date" "$expected" "$output"
 
 output=$(PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$fake_workspace" FAKE_GIT_STATE="$git_state" FAKE_GIT_UPDATE_VERSION="$new_version" UPDATE_INSTALL_MARKER="$install_marker" "$WORKSPACE_HOME/bin/workspace" update)
-expected="Updating workspace CLI...
+expected="Checking for workspace CLI updates...
 workspace updated to $new_version"
 assert_equal "changed update reports the new version" "$expected" "$output"
 
