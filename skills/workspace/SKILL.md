@@ -42,7 +42,7 @@ The project customizes the lifecycle by dropping executable scripts into its own
 | Hook | When it runs | How |
 | --- | --- | --- |
 | `bin/workspace-identity-hook` | Before isolated sibling lifecycle work when neither `.conductor-workspace` nor `.workspace` exists; print the established name without `_` | Executed with `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and derived `WORKSPACE_NAME` exported; empty output defers to provider/Git defaults; never called for the root/default checkout |
-| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; materialize local `database.yml` here when needed | Executed |
+| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported and `WORKSPACE_ROOT_PATH` supplied for this invocation; materialize local `database.yml` here when needed | Executed from the managed sibling checkout |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX`, before Workspace prepares dev/test databases; prevents the legacy setup fallback in managed siblings | Executed |
 | `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file write | Executed |
@@ -51,6 +51,12 @@ The project customizes the lifecycle by dropping executable scripts into its own
 
 A hook that isn't executable (`chmod +x`) won't run. Every hook is optional;
 `workspace init` does not create empty hook files.
+
+For the database hook, `WORKSPACE_ROOT_PATH` identifies the original/root
+checkout selected by provider or Git resolution; the hook's working directory
+remains the managed sibling checkout. Workspace passes the resolved value
+through without adding a canonicalization guarantee. Later lifecycle hooks and
+application processes must not rely on it.
 
 ## Key concepts
 
@@ -138,4 +144,4 @@ cd .. && rm -rf myapp-feature-x
 
 - Source: <https://github.com/jnunemaker/workspace>
 - Local install: `~/.workspace` (CLI in `~/.workspace/bin/workspace`, lib scripts in `~/.workspace/lib/`)
-- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)
+- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_ROOT_PATH` (supplied to the identity hook when it runs and guaranteed to each database-hook invocation), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)

@@ -51,6 +51,7 @@ SCRIPT
 help_output=$(sh "$WORKSPACE_HOME/lib/bootstrap.sh" --help)
 assert_true "bootstrap help documents dedicated setup hook" output_has "$help_output" 'workspace setup hook'
 assert_true "bootstrap help documents legacy setup fallback" output_has "$help_output" 'legacy setup fallback'
+assert_true "bootstrap help documents database hook inputs" output_has "$help_output" 'database hook receives WORKSPACE_DB_SUFFIX and WORKSPACE_ROOT_PATH'
 assert_true "bootstrap help says bin/update is never run" output_has "$help_output" 'never runs bin/update'
 
 # A project can materialize database.yml before its ordinary setup script. The
@@ -269,20 +270,37 @@ log="$TEST_TMP/identity-hook-bootstrap.log"
 hook_log="$TEST_TMP/identity-hook-calls.log"
 cd "$app_dir"
 install_suffix_logging_lifecycle
+cat > "$root_dir/config/database.yml" <<'YAML'
+development:
+  database: root_development
+test:
+  database: root_test
+YAML
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s:%s\n' "$WORKSPACE_DB_SUFFIX" "$WORKSPACE_ROOT_PATH" >> "$WORKSPACE_TEST_LOG"
+cp "$WORKSPACE_ROOT_PATH/config/database.yml" config/database.yml
+SCRIPT
 cat > bin/workspace-identity-hook <<'SCRIPT'
 #!/bin/sh
 printf 'called\n' >> "$WORKSPACE_IDENTITY_HOOK_LOG"
 printf '%s' "stable-worktree-id"
 SCRIPT
-chmod +x bin/workspace-identity-hook
+chmod +x bin/workspace-database-hook bin/workspace-identity-hook
 
 WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "display-name" "$log"
+first_bootstrap_status=$?
+assert_equal "first identity-hook bootstrap succeeds" "0" "$first_bootstrap_status"
 assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
 assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
+assert_equal "first database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
 
 : > "$log"
 WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
-assert_equal "repeated bootstrap keeps pinned suffix" "setup:_stable-worktree-id" "$(sed -n '1p' "$log")"
+repeated_bootstrap_status=$?
+assert_equal "repeated identity-hook bootstrap succeeds" "0" "$repeated_bootstrap_status"
+assert_equal "repeated database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
+assert_equal "repeated bootstrap keeps pinned suffix" "setup:_stable-worktree-id" "$(sed -n '2p' "$log")"
 assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 
 # Invalid stable identity fails before project setup or database preparation.

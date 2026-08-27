@@ -29,6 +29,8 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
   echo "Managed sibling ordering: shared files → WORKSPACE_DB_SUFFIX → database"
   echo "configuration hook → workspace setup hook (or legacy setup fallback) →"
   echo "database preparation → optional seed and bootstrap hooks."
+  echo "The database hook receives WORKSPACE_DB_SUFFIX and WORKSPACE_ROOT_PATH"
+  echo "for that invocation and runs from the managed sibling checkout."
   echo ""
   echo "Workspace never runs bin/update."
   exit 0
@@ -215,7 +217,7 @@ fi
 # the CLI can isolate it before bin/setup performs any database work.
 if [ -x bin/workspace-database-hook ]; then
   header "Preparing database configuration"
-  bin/workspace-database-hook
+  WORKSPACE_ROOT_PATH="$WORKSPACE_ROOT_PATH" bin/workspace-database-hook
 fi
 
 patch_database_yml
