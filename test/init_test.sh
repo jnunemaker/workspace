@@ -19,6 +19,62 @@ codex_cleanup_command() {
   ' "$1"
 }
 
+# Help must return before init inspects or changes project files.
+init_help_expected="$TEST_TMP/init-help.expected"
+cat > "$init_help_expected" <<'EOF'
+Usage: workspace init
+
+Adds Workspace support to the current project.
+Run this from the original checkout. It may update config/database.yml,
+bin/workspace, .workspace-version, provider configuration, and .gitignore.
+Review and commit the generated changes.
+EOF
+
+init_help_first_output=""
+for help_case in long short; do
+  case "$help_case" in
+    long) help_flag="--help" ;;
+    short) help_flag="-h" ;;
+  esac
+
+  app_dir=$(create_fake_app "init-help-$help_case")
+  cd "$app_dir"
+  cat > config/database.yml <<'YAML'
+development:
+  database: help_development
+YAML
+  printf 'tmp/\n' > .gitignore
+  cp config/database.yml "$TEST_TMP/init-help-$help_case.database.yml"
+  cp .gitignore "$TEST_TMP/init-help-$help_case.gitignore"
+
+  help_output="$TEST_TMP/init-help-$help_case.out"
+  help_error="$TEST_TMP/init-help-$help_case.err"
+  "$WORKSPACE_HOME/bin/workspace" init "$help_flag" >"$help_output" 2>"$help_error"
+  help_status=$?
+
+  assert_equal "init $help_flag exits successfully" "0" "$help_status"
+  assert_true "init $help_flag prints exact help" cmp -s "$init_help_expected" "$help_output"
+  assert_true "init $help_flag writes nothing to stderr" [ ! -s "$help_error" ]
+  assert_false "init $help_flag has no ANSI styling" grep -q "$(printf '\033')" "$help_output"
+  assert_false "init $help_flag prints no initialization output" grep -Eq 'Initializing workspace support|Project is now workspace-ready' "$help_output"
+  assert_false "init $help_flag creates no project entrypoint" [ -e bin/workspace ]
+  assert_false "init $help_flag creates no version contract" [ -e .workspace-version ]
+  assert_false "init $help_flag creates no Conductor config" [ -e .conductor ]
+  assert_false "init $help_flag creates no Superconductor config" [ -e .superconductor ]
+  assert_false "init $help_flag creates no Superset config" [ -e .superset ]
+  assert_false "init $help_flag creates no Codex config" [ -e .codex ]
+  assert_false "init $help_flag creates no workspace marker" [ -e .workspace ]
+  assert_true "init $help_flag preserves database.yml" cmp -s "$TEST_TMP/init-help-$help_case.database.yml" config/database.yml
+  assert_true "init $help_flag preserves .gitignore" cmp -s "$TEST_TMP/init-help-$help_case.gitignore" .gitignore
+  assert_false "init $help_flag adds no workspace ignore entry" grep -qxF '.workspace' .gitignore
+
+  if [ -z "$init_help_first_output" ]; then
+    init_help_first_output="$help_output"
+  else
+    assert_true "init help flags print identical output" cmp -s "$init_help_first_output" "$help_output"
+  fi
+done
+
 # ── init: creates .conductor/settings.toml ──────────────────────
 
 app_dir=$(create_fake_app "init-conductor")

@@ -293,6 +293,102 @@ kill "$other_lock_owner"
 wait "$other_lock_owner" 2>/dev/null || true
 rm "$git_root/.git/workspace/prune.lock"
 
+# Help must return before Git discovery, registry locking, or stale cleanup.
+prune_help_bin="$TEST_TMP/prune-help-bin"
+prune_help_git_log="$TEST_TMP/prune-help-git.log"
+prune_help_lsof_log="$TEST_TMP/prune-help-lsof.log"
+prune_help_archive_hook_log="$TEST_TMP/prune-help-archive-hook.log"
+prune_help_rails_log="$TEST_TMP/prune-help-rails.log"
+prune_help_deferred_log="$TEST_TMP/prune-help-deferred.log"
+prune_help_real_git=$(command -v git)
+mkdir -p "$prune_help_bin"
+cat > "$prune_help_bin/git" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "-C" ] && [ "${2:-}" = "$WORKSPACE_HOME" ] && [ "${3:-}" = "log" ]; then
+  exec "$WORKSPACE_TEST_REAL_GIT" "$@"
+fi
+printf '%s\n' "$*" >> "$WORKSPACE_TEST_GIT_DISCOVERY_LOG"
+exec "$WORKSPACE_TEST_REAL_GIT" "$@"
+EOF
+cat > "$prune_help_bin/lsof" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$WORKSPACE_TEST_LSOF_LOG"
+exit 1
+EOF
+cat > "$prune_help_bin/nohup" <<'EOF'
+#!/bin/sh
+printf 'deferred\n' >> "$WORKSPACE_TEST_DEFERRED_LOG"
+exit 0
+EOF
+cat > bin/rails <<'EOF'
+#!/bin/sh
+printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_PRUNE_LOG"
+EOF
+cat > bin/workspace-archive-hook <<'EOF'
+#!/bin/sh
+printf 'archive-hook\n' >> "$WORKSPACE_TEST_ARCHIVE_HOOK_LOG"
+EOF
+chmod +x "$prune_help_bin/git" "$prune_help_bin/lsof" "$prune_help_bin/nohup" bin/rails bin/workspace-archive-hook
+
+prune_help_expected="$TEST_TMP/prune-help.expected"
+cat > "$prune_help_expected" <<'EOF'
+Usage: workspace prune [--deferred]
+
+Cleans up ports and databases recorded for Git worktrees that no longer exist.
+Live Git worktrees are left alone.
+
+Options:
+  --deferred  Wait briefly so Git can finish removing the worktree
+EOF
+cp "$registry_entry" "$TEST_TMP/prune-help-live-record.expected"
+prune_help_first_output=""
+for help_case in long short; do
+  case "$help_case" in
+    long) help_flag="--help" ;;
+    short) help_flag="-h" ;;
+  esac
+  prune_help_entry="$git_root/.git/workspace/registry/prune-help-$help_case.record"
+  printf 'prune-help-%s\n%s\n%s\n51550\n' "$help_case" "$git_root" "$TEST_TMP/removed-prune-help-$help_case" > "$prune_help_entry"
+  cp "$prune_help_entry" "$TEST_TMP/prune-help-$help_case.record.expected"
+  : > "$prune_help_git_log"
+  : > "$prune_help_lsof_log"
+  : > "$prune_help_archive_hook_log"
+  : > "$prune_help_rails_log"
+  : > "$prune_help_deferred_log"
+  help_output="$TEST_TMP/prune-help-$help_case.out"
+  help_error="$TEST_TMP/prune-help-$help_case.err"
+
+  env PATH="$prune_help_bin:/usr/bin:/bin" WORKSPACE_HOME="$WORKSPACE_HOME" \
+    WORKSPACE_TEST_REAL_GIT="$prune_help_real_git" \
+    WORKSPACE_TEST_GIT_DISCOVERY_LOG="$prune_help_git_log" \
+    WORKSPACE_TEST_LSOF_LOG="$prune_help_lsof_log" \
+    WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$prune_help_archive_hook_log" \
+    WORKSPACE_TEST_PRUNE_LOG="$prune_help_rails_log" \
+    WORKSPACE_TEST_DEFERRED_LOG="$prune_help_deferred_log" \
+    "$WORKSPACE_HOME/bin/workspace" prune "$help_flag" >"$help_output" 2>"$help_error"
+  help_status=$?
+
+  assert_equal "prune $help_flag exits successfully" "0" "$help_status"
+  assert_true "prune $help_flag prints exact help" cmp -s "$prune_help_expected" "$help_output"
+  assert_true "prune $help_flag writes nothing to stderr" [ ! -s "$help_error" ]
+  assert_false "prune $help_flag has no ANSI styling" grep -q "$(printf '\033')" "$help_output"
+  assert_equal "prune $help_flag skips workspace discovery" "" "$(cat "$prune_help_git_log")"
+  assert_true "prune $help_flag preserves stale record" cmp -s "$TEST_TMP/prune-help-$help_case.record.expected" "$prune_help_entry"
+  assert_true "prune $help_flag preserves live record" cmp -s "$TEST_TMP/prune-help-live-record.expected" "$registry_entry"
+  assert_false "prune $help_flag creates no lock" [ -e "$git_root/.git/workspace/prune.lock" ]
+  assert_equal "prune $help_flag skips archive hook" "" "$(cat "$prune_help_archive_hook_log")"
+  assert_equal "prune $help_flag skips port inspection" "" "$(cat "$prune_help_lsof_log")"
+  assert_equal "prune $help_flag skips database cleanup" "" "$(cat "$prune_help_rails_log")"
+  assert_equal "prune $help_flag schedules no deferred cleanup" "" "$(cat "$prune_help_deferred_log")"
+
+  if [ -z "$prune_help_first_output" ]; then
+    prune_help_first_output="$help_output"
+  else
+    assert_true "prune help flags print identical output" cmp -s "$prune_help_first_output" "$help_output"
+  fi
+  rm -f "$prune_help_entry"
+done
+
 # Removing the Git worktree makes the registry entry stale. Prune must clean
 # the isolated databases from the surviving root checkout, then unregister it.
 git worktree remove -f "$git_worktree"

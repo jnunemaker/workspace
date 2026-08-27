@@ -107,6 +107,8 @@ assert_true "run preserves marker identity across dotenv loading" grep -q '^WORK
 archive_bin="$TEST_TMP/archive-bin"
 archive_lsof_log="$TEST_TMP/archive-lsof.log"
 archive_rails_log="$TEST_TMP/archive-rails.log"
+archive_hook_log="$TEST_TMP/archive-hook.log"
+archive_identity_log="$TEST_TMP/archive-identity.log"
 mkdir -p "$archive_bin"
 cat > "$archive_bin/lsof" <<'SCRIPT'
 #!/bin/sh
@@ -117,13 +119,77 @@ cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_ARCHIVE_LOG"
 SCRIPT
-chmod +x "$archive_bin/lsof" bin/rails
+cat > bin/workspace-archive-hook <<'SCRIPT'
+#!/bin/sh
+printf 'archive-hook\n' >> "$WORKSPACE_TEST_ARCHIVE_HOOK_LOG"
+SCRIPT
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'identity-hook\n' >> "$WORKSPACE_TEST_ARCHIVE_IDENTITY_LOG"
+printf 'stable-help-identity\n'
+SCRIPT
+chmod +x "$archive_bin/lsof" bin/rails bin/workspace-archive-hook bin/workspace-identity-hook
+rm -f .conductor-workspace .workspace
+
+archive_help_expected="$TEST_TMP/archive-help.expected"
+cat > "$archive_help_expected" <<'EOF'
+Usage: workspace archive
+
+Stops processes using this workspace's reserved ports and drops its development
+and test databases. Runs bin/workspace-archive-hook first when present.
+The original checkout is left alone.
+EOF
+
+archive_help_first_output=""
+for help_case in long short; do
+  case "$help_case" in
+    long) help_flag="--help" ;;
+    short) help_flag="-h" ;;
+  esac
+  : > "$archive_identity_log"
+  : > "$archive_hook_log"
+  : > "$archive_lsof_log"
+  : > "$archive_rails_log"
+  help_output="$TEST_TMP/archive-help-$help_case.out"
+  help_error="$TEST_TMP/archive-help-$help_case.err"
+
+  PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+    CONDUCTOR_WORKSPACE_NAME="help-provider-workspace" CONDUCTOR_PORT=51500 \
+    WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" \
+    WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" \
+    WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" \
+    WORKSPACE_TEST_ARCHIVE_IDENTITY_LOG="$archive_identity_log" \
+    "$WORKSPACE_HOME/bin/workspace" archive "$help_flag" >"$help_output" 2>"$help_error"
+  help_status=$?
+
+  assert_equal "archive $help_flag exits successfully" "0" "$help_status"
+  assert_true "archive $help_flag prints exact help" cmp -s "$archive_help_expected" "$help_output"
+  assert_true "archive $help_flag writes nothing to stderr" [ ! -s "$help_error" ]
+  assert_false "archive $help_flag has no ANSI styling" grep -q "$(printf '\033')" "$help_output"
+  assert_equal "archive $help_flag skips identity resolution" "" "$(cat "$archive_identity_log")"
+  assert_equal "archive $help_flag skips archive hook" "" "$(cat "$archive_hook_log")"
+  assert_equal "archive $help_flag skips port inspection" "" "$(cat "$archive_lsof_log")"
+  assert_equal "archive $help_flag skips database cleanup" "" "$(cat "$archive_rails_log")"
+  assert_false "archive $help_flag creates no Conductor marker" [ -e .conductor-workspace ]
+  assert_false "archive $help_flag creates no workspace marker" [ -e .workspace ]
+
+  if [ -z "$archive_help_first_output" ]; then
+    archive_help_first_output="$help_output"
+  else
+    assert_true "archive help flags print identical output" cmp -s "$archive_help_first_output" "$help_output"
+  fi
+done
+
+: > "$archive_hook_log"
+: > "$archive_lsof_log"
+: > "$archive_rails_log"
 printf '%s' "stable-archive-name" > .conductor-workspace
 printf '%s' "stale-workspace-name" > .workspace
 PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="renamed-provider-workspace" \
   WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" \
   WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" \
+  WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" \
   sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
 assert_equal "archive honors dotenv workspace port block" "10" "$(wc -l < "$archive_lsof_log" | tr -d ' ')"
 assert_true "archive starts dotenv port sweep at the explicit base" grep -q -- '-ti :51500' "$archive_lsof_log"
