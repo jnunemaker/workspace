@@ -187,8 +187,9 @@ resolve_workspace_identity() {
     WORKSPACE_NAME="$_identity_result"
     WORKSPACE_IDENTITY_SOURCE=".workspace"
   elif [ -x bin/workspace-identity-hook ]; then
-    export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
-    if ! _hook_workspace_name=$(bin/workspace-identity-hook); then
+    # Keep the root path out of later bootstrap children after this hook exits.
+    export WORKSPACE_PROVIDER WORKSPACE_NAME
+    if ! _hook_workspace_name=$(WORKSPACE_ROOT_PATH="$WORKSPACE_ROOT_PATH" bin/workspace-identity-hook); then
       err "bin/workspace-identity-hook failed"
       return 1
     fi

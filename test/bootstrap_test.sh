@@ -271,6 +271,10 @@ log="$TEST_TMP/identity-hook-bootstrap.log"
 hook_log="$TEST_TMP/identity-hook-calls.log"
 cd "$app_dir"
 install_suffix_logging_lifecycle
+cat > bin/setup <<'SCRIPT'
+#!/bin/sh
+printf 'setup:%s:%s\n' "$WORKSPACE_DB_SUFFIX" "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
 cat > "$root_dir/config/database.yml" <<'YAML'
 development:
   database: root_development
@@ -295,13 +299,14 @@ assert_equal "first identity-hook bootstrap succeeds" "0" "$first_bootstrap_stat
 assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
 assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 assert_equal "first database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
+assert_equal "first setup does not inherit root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
 
 : > "$log"
 WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
 repeated_bootstrap_status=$?
 assert_equal "repeated identity-hook bootstrap succeeds" "0" "$repeated_bootstrap_status"
 assert_equal "repeated database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
-assert_equal "repeated bootstrap keeps pinned suffix" "setup:_stable-worktree-id" "$(sed -n '2p' "$log")"
+assert_equal "repeated bootstrap keeps pinned suffix without root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
 assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 
 # Invalid stable identity fails before project setup or database preparation.
