@@ -389,6 +389,21 @@ for help_case in long short; do
   rm -f "$prune_help_entry"
 done
 
+# A later help flag must not override prune's first-position mode.
+: > "$prune_help_git_log"
+mixed_help_output="$TEST_TMP/prune-mixed-help.out"
+mixed_help_error="$TEST_TMP/prune-mixed-help.err"
+env PATH="$prune_help_bin:/usr/bin:/bin" WORKSPACE_HOME="$WORKSPACE_HOME" \
+  WORKSPACE_TEST_REAL_GIT="$prune_help_real_git" \
+  WORKSPACE_TEST_GIT_DISCOVERY_LOG="$prune_help_git_log" \
+  WORKSPACE_TEST_DEFERRED_LOG="$prune_help_deferred_log" \
+  "$WORKSPACE_HOME/bin/workspace" prune --deferred --help >"$mixed_help_output" 2>"$mixed_help_error"
+mixed_help_status=$?
+assert_equal "prune later help flag preserves deferred status" "0" "$mixed_help_status"
+assert_true "prune later help flag preserves workspace discovery" [ -s "$prune_help_git_log" ]
+assert_true "prune later help flag prints no help" [ ! -s "$mixed_help_output" ]
+assert_true "prune later help flag writes nothing to stderr" [ ! -s "$mixed_help_error" ]
+
 # Removing the Git worktree makes the registry entry stale. Prune must clean
 # the isolated databases from the surviving root checkout, then unregister it.
 git worktree remove -f "$git_worktree"
