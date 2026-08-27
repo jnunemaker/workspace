@@ -213,8 +213,8 @@ fi
 
 # ── Materialize and patch DB config before project setup ─────────
 
-# Some projects generate config/database.yml locally. They can do that here so
-# the CLI can isolate it before bin/setup performs any database work.
+# Some projects materialize config/database.yml from root-owned config before
+# setup. The suffix is lifecycle-wide; root access belongs only to this hook.
 if [ -x bin/workspace-database-hook ]; then
   header "Preparing database configuration"
   WORKSPACE_ROOT_PATH="$WORKSPACE_ROOT_PATH" bin/workspace-database-hook
