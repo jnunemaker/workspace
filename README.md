@@ -73,7 +73,7 @@ Run `bin/workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` 
 1. Resolve one stable database identity from existing markers, a project hook, provider variables, or Git worktree metadata.
 2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
 3. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
-4. Run `bin/workspace-database-hook` with the resolved `WORKSPACE_ROOT_PATH`, then patch an existing `config/database.yml` for isolation.
+4. Run `bin/workspace-database-hook` with the path to the original checkout, then patch an existing `config/database.yml` for isolation.
 5. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
 6. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
 7. Run the optional seed hook, atomically write `.workspace`, then run the optional bootstrap hook.
@@ -200,7 +200,7 @@ Place any of these in your project's `bin/` directory to customize the workspace
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
 | `bin/workspace-identity-hook` | Before lifecycle work when neither identity marker exists; print an established workspace name without the `_` prefix | Executed; empty output defers to provider/Git defaults |
-| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported and `WORKSPACE_ROOT_PATH` supplied for this invocation; use it to materialize `config/database.yml` locally | Executed from the managed sibling checkout |
+| `bin/workspace-database-hook` | Before project setup; can read `WORKSPACE_DB_SUFFIX` and, while the hook is running, `WORKSPACE_ROOT_PATH`; use the root path to copy database configuration when needed | Runs from the workspace checkout, not the original checkout |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file written | Executed |
@@ -214,11 +214,12 @@ configuration must exist before the setup hook itself runs, materialize it in
 `bin/workspace-database-hook`. Existing projects without the dedicated setup
 hook retain the legacy setup fallback.
 
-For the database hook, `WORKSPACE_ROOT_PATH` identifies the original/root
-checkout selected by provider or Git resolution; the hook's working directory
-remains the managed sibling checkout. Workspace passes the resolved value
-through without adding a canonicalization guarantee. Later lifecycle hooks and
-application processes must not rely on it.
+`WORKSPACE_ROOT_PATH` is the path to the original checkout. A database hook can
+use it to copy a file such as `config/database.yml`, even though the hook runs
+from the workspace checkout. Workspace provides the path only while the
+database hook is running. Later hooks and the app should not expect it. The
+hook receives the same path Workspace already found; Workspace does not change
+the path before passing it to the hook.
 
 All hooks are optional. `workspace init` deliberately does not scaffold empty
 hooks; add and commit only the hooks the project actually needs.
@@ -251,7 +252,7 @@ To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_C
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
 - `WORKSPACE_PORT` — optional provider-neutral base-port override
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
-- `WORKSPACE_ROOT_PATH` — resolved original/root checkout path supplied to the identity hook when it runs and guaranteed to each database-hook invocation; later hooks and application processes must not rely on it
+- `WORKSPACE_ROOT_PATH` — path to the original checkout; available to the identity hook when it runs and to every database hook; later hooks and the app should not expect it
 - `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
 - `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
 - `WORKSPACE_APP_URL` — set by `bin/workspace-run-hook` to override the URL displayed before Foreman starts

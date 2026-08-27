@@ -51,7 +51,8 @@ SCRIPT
 help_output=$(sh "$WORKSPACE_HOME/lib/bootstrap.sh" --help)
 assert_true "bootstrap help documents dedicated setup hook" output_has "$help_output" 'workspace setup hook'
 assert_true "bootstrap help documents legacy setup fallback" output_has "$help_output" 'legacy setup fallback'
-assert_true "bootstrap help documents database hook inputs" output_has "$help_output" 'database hook receives WORKSPACE_DB_SUFFIX and WORKSPACE_ROOT_PATH'
+assert_true "bootstrap help documents the database suffix" output_has "$help_output" 'database hook can read WORKSPACE_DB_SUFFIX'
+assert_true "bootstrap help limits the root path to the database hook" output_has "$help_output" 'WORKSPACE_ROOT_PATH, but only while the hook runs'
 assert_true "bootstrap help says bin/update is never run" output_has "$help_output" 'never runs bin/update'
 
 # A project can materialize database.yml before its ordinary setup script. The

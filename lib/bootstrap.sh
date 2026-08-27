@@ -29,8 +29,9 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
   echo "Managed sibling ordering: shared files → WORKSPACE_DB_SUFFIX → database"
   echo "configuration hook → workspace setup hook (or legacy setup fallback) →"
   echo "database preparation → optional seed and bootstrap hooks."
-  echo "The database hook receives WORKSPACE_DB_SUFFIX and WORKSPACE_ROOT_PATH"
-  echo "for that invocation and runs from the managed sibling checkout."
+  echo "The database hook can read WORKSPACE_DB_SUFFIX. It can also read"
+  echo "WORKSPACE_ROOT_PATH, but only while the hook runs. The hook runs in the"
+  echo "workspace checkout, not the original checkout."
   echo ""
   echo "Workspace never runs bin/update."
   exit 0
@@ -213,8 +214,8 @@ fi
 
 # ── Materialize and patch DB config before project setup ─────────
 
-# Some projects materialize config/database.yml from root-owned config before
-# setup. The suffix is lifecycle-wide; root access belongs only to this hook.
+# A database hook may copy config/database.yml from the root checkout. Give
+# only this hook the path so later hooks and the app do not depend on it.
 if [ -x bin/workspace-database-hook ]; then
   header "Preparing database configuration"
   WORKSPACE_ROOT_PATH="$WORKSPACE_ROOT_PATH" bin/workspace-database-hook
