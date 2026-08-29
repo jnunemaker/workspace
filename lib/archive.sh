@@ -15,6 +15,18 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/db.sh"
 . "$WORKSPACE_LIB/registry.sh"
 
+# Help must return before archive inspects or removes workspace resources.
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<'EOF'
+Usage: workspace archive
+
+Stops processes using this workspace's reserved ports and drops its development
+and test databases. Runs bin/workspace-archive-hook first when present.
+The original checkout is left alone.
+EOF
+  exit 0
+fi
+
 _archive_registry_entry=""
 if [ "${1:-}" = "--registry-entry" ]; then
   _archive_registry_entry="$2"

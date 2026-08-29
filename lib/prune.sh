@@ -7,6 +7,19 @@ WORKSPACE_LIB="$(cd "$(dirname "$0")" && pwd)"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/registry.sh"
 
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<'EOF'
+Usage: workspace prune [--deferred]
+
+Cleans up ports and databases recorded for Git worktrees that no longer exist.
+Live Git worktrees are left alone.
+
+Options:
+  --deferred  Wait briefly so Git can finish removing the worktree
+EOF
+  exit 0
+fi
+
 _prune_mode="${1:-}"
 
 if [ "$_prune_mode" = "--after-delay" ]; then
