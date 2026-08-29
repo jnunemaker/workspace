@@ -167,17 +167,9 @@ native cleanup is added, and a missing **Workspace info** action is added.
 Exact older Workspace cleanup defaults are upgraded; custom cleanup commands
 and linked configuration files are left unchanged.
 
-`workspace init` also keeps a project-local `SessionEnd` hook in
-`.codex/hooks.json` as recovery for older Codex versions, interrupted cleanup,
-forced worktree deletion, and app shutdown. SessionEnd does not distinguish an
-archived chat from an ordinary app close or idle session, so it never archives
-the current checkout directly. It schedules `workspace prune --deferred`,
-which waits for Git to confirm that Codex removed the worktree before killing
-its ports and dropping its databases.
-
 After committing the generated `.codex` files, select the local environment in
-Codex when starting a worktree chat. Review and trust the project hook when
-Codex prompts; untrusted command hooks are skipped.
+Codex when starting a worktree chat. Workspace does not generate project-local
+Codex hooks; lifecycle behavior stays in the native environment actions.
 
 `CODEX_SOURCE_TREE_PATH` and `CODEX_WORKTREE_PATH` locate Codex checkouts when
 Codex provides them; they never construct `WORKSPACE_NAME` or
@@ -189,9 +181,9 @@ precedence over Git detection.
 
 Cleanup registrations live under the repository's shared Git directory at
 `.git/workspace/registry/`, so they survive deletion of the disposable
-worktree. The registry, deferred SessionEnd prune, and reconciliation on the
-next `workspace bootstrap` or `workspace run` are recovery mechanisms when
-native cleanup could not complete.
+worktree. The registry and reconciliation on the next `workspace bootstrap`,
+`workspace run`, or explicit `workspace prune` recover resources when native
+cleanup could not complete.
 
 ## Hooks
 
