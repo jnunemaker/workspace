@@ -349,11 +349,8 @@ printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
 SCRIPT
 chmod +x bin/workspace-database-hook
 
-CONDUCTOR_ROOT_PATH="$TEST_TMP/missing-root" \
-  CONDUCTOR_WORKSPACE_NAME="stale-root-provider" \
-  WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
-stale_root_bootstrap_status=$?
-assert_equal "stale-root provider bootstrap succeeds" "0" "$stale_root_bootstrap_status"
+assert_true "stale-root provider bootstrap succeeds" run_bootstrap \
+  "$TEST_TMP/missing-root" "stale-root-provider" "$log"
 assert_equal "database hook does not receive a stale root path" "database:unset" "$(sed -n '1p' "$log")"
 
 # Invalid stable identity fails before project setup or database preparation.
