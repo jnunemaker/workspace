@@ -126,6 +126,7 @@ cat > bin/workspace-setup-hook <<'SCRIPT'
 #!/bin/sh
 [ -L .env ] || exit 1
 [ "${shared:-}" = "true" ] || exit 1
+[ "${WORKSPACE_ROOT_PATH+x}" != "x" ] || exit 1
 printf 'workspace-setup:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
 SCRIPT
 cat > bin/setup <<'SCRIPT'
@@ -327,7 +328,8 @@ printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
 SCRIPT
 chmod +x bin/workspace-identity-hook bin/workspace-database-hook
 
-CONDUCTOR_ROOT_PATH="" CONDUCTOR_WORKSPACE_NAME="rootless-provider" \
+WORKSPACE_ROOT_PATH="/stale/exported/root" \
+  CONDUCTOR_ROOT_PATH="" CONDUCTOR_WORKSPACE_NAME="rootless-provider" \
   WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 rootless_bootstrap_status=$?
 assert_equal "rootless provider bootstrap succeeds" "0" "$rootless_bootstrap_status"

@@ -193,6 +193,12 @@ fi
 # provider, root, or stable database identity already resolved above.
 load_dotenv_defaults ./.env
 
+# An inherited value or dotenv can leave the hook-only root path exported.
+# Preserve the resolved value while removing that export before child work.
+_resolved_workspace_root_path="$WORKSPACE_ROOT_PATH"
+unset WORKSPACE_ROOT_PATH
+WORKSPACE_ROOT_PATH="$_resolved_workspace_root_path"
+
 # ── Export workspace DB env vars ─────────────────────────────────
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
