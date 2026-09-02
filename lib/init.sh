@@ -13,6 +13,19 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
 
+# Help must return before init changes project files.
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<'EOF'
+Usage: workspace init
+
+Adds Workspace support to the current project.
+Run this from the original checkout. It may update config/database.yml,
+bin/workspace, .workspace-version, provider configuration, and .gitignore.
+Review and commit the generated changes.
+EOF
+  exit 0
+fi
+
 _path_has_symlink_component() {
   _linked_path="$1"
   while [ "$_linked_path" != "." ] && [ "$_linked_path" != "/" ]; do

@@ -71,6 +71,16 @@ case "${1:-}" in
     ;;
   update)
     shift
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+      cat <<'EOF'
+Usage: workspace update
+
+Updates the shared Workspace CLI and refreshes any installed Claude Code or
+Codex Workspace skill. It does not change files in application repositories.
+Run workspace init separately to refresh generated project files.
+EOF
+      exit 0
+    fi
     echo "Checking for workspace CLI updates..."
     if [ -d "$WORKSPACE_HOME/.git" ]; then
       git -C "$WORKSPACE_HOME" pull origin main --quiet
@@ -87,7 +97,19 @@ case "${1:-}" in
       echo "workspace updated to $NEW_VERSION"
     fi
     ;;
-  version|--version|-v)
+  version)
+    shift
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+      cat <<'EOF'
+Usage: workspace version
+
+Prints the installed Workspace version.
+EOF
+      exit 0
+    fi
+    echo "workspace $VERSION"
+    ;;
+  --version|-v)
     echo "workspace $VERSION"
     ;;
   help|--help|-h|"")
