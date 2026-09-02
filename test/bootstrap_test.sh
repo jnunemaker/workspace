@@ -309,24 +309,30 @@ assert_equal "repeated database hook receives root and pinned suffix" "database:
 assert_equal "repeated bootstrap keeps pinned suffix without root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
 assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 
-# A provider may supply a workspace name without a root checkout. Preserve the
-# database hook's prior unset-variable contract when no usable path exists.
+# A provider may supply a workspace name without a root checkout. Hooks only
+# receive the root variable when Workspace has a usable path.
 paths=$(make_bootstrap_app "database-hook-without-root")
 app_dir=${paths%%|*}
 log="$TEST_TMP/database-hook-without-root.log"
 cd "$app_dir"
 install_suffix_logging_lifecycle
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'identity:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+printf '%s' "rootless-identity"
+SCRIPT
 cat > bin/workspace-database-hook <<'SCRIPT'
 #!/bin/sh
 printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
 SCRIPT
-chmod +x bin/workspace-database-hook
+chmod +x bin/workspace-identity-hook bin/workspace-database-hook
 
 CONDUCTOR_ROOT_PATH="" CONDUCTOR_WORKSPACE_NAME="rootless-provider" \
   WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 rootless_bootstrap_status=$?
 assert_equal "rootless provider bootstrap succeeds" "0" "$rootless_bootstrap_status"
-assert_equal "database hook receives no empty root variable" "database:unset" "$(sed -n '1p' "$log")"
+assert_equal "identity hook receives no empty root variable" "identity:unset" "$(sed -n '1p' "$log")"
+assert_equal "database hook receives no empty root variable" "database:unset" "$(sed -n '2p' "$log")"
 
 # Invalid stable identity fails before project setup or database preparation.
 paths=$(make_bootstrap_app "invalid-stable-identity")
