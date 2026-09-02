@@ -145,9 +145,9 @@ a provider display-name, directory, or branch rename.
 
 An identity hook prints the established workspace name without the leading
 underscore. It may print nothing to defer to provider/Git detection. Workspace
-exports `WORKSPACE_PROVIDER` and the detected `WORKSPACE_NAME` while invoking
-it. When Workspace has a usable original-checkout path, it also exports
-`WORKSPACE_ROOT_PATH`; otherwise that variable is unset. Once either marker
+exports `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and the detected
+`WORKSPACE_NAME` while invoking it. For compatibility, an identity hook sees
+`WORKSPACE_ROOT_PATH` as empty when no root is available. Once either marker
 exists, the hook is not called. A non-empty `.conductor-workspace` remains
 authoritative for the worktree until the project removes it.
 
@@ -217,11 +217,11 @@ hook retain the legacy setup fallback.
 
 `WORKSPACE_ROOT_PATH` is the path to the original checkout. A database hook can
 use it to copy a file such as `config/database.yml`, even though the hook runs
-from the workspace checkout. Workspace provides the variable only while an
-identity or database hook is running and only when it resolved a usable path;
-otherwise the variable is unset. Later hooks and the app should not expect it.
-The hook receives the same path Workspace already found; Workspace does not
-change the path before passing it to the hook.
+from the workspace checkout. An identity hook always receives the variable for
+compatibility, with an empty value when no root is available. A database hook
+receives it only when the resolved path names an existing directory; otherwise
+the variable is unset. Later hooks and the app should not expect it. Workspace
+does not change the path before passing it to a hook.
 
 All hooks are optional. `workspace init` deliberately does not scaffold empty
 hooks; add and commit only the hooks the project actually needs.
@@ -254,7 +254,7 @@ To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_C
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
 - `WORKSPACE_PORT` — optional provider-neutral base-port override
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
-- `WORKSPACE_ROOT_PATH` — usable path to the original checkout; provided only to identity and database hooks when Workspace resolves one, and unset otherwise
+- `WORKSPACE_ROOT_PATH` — path to the original checkout; exported to the identity hook (empty when unavailable) and to the database hook only when it names an existing directory
 - `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
 - `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
 - `WORKSPACE_APP_URL` — set by `bin/workspace-run-hook` to override the URL displayed before Foreman starts

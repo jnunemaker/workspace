@@ -224,7 +224,7 @@ fi
 # only this hook the path so later hooks and the app do not depend on it.
 if [ -x bin/workspace-database-hook ]; then
   header "Preparing database configuration"
-  if [ -n "$WORKSPACE_ROOT_PATH" ]; then
+  if [ -d "$WORKSPACE_ROOT_PATH" ]; then
     WORKSPACE_ROOT_PATH="$WORKSPACE_ROOT_PATH" bin/workspace-database-hook
   else
     bin/workspace-database-hook

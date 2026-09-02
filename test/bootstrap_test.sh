@@ -321,7 +321,7 @@ cd "$app_dir"
 install_suffix_logging_lifecycle
 cat > bin/workspace-identity-hook <<'SCRIPT'
 #!/bin/sh
-printf 'identity:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+printf 'identity:%s:%s\n' "${WORKSPACE_ROOT_PATH+x}" "${WORKSPACE_ROOT_PATH-}" >> "$WORKSPACE_TEST_LOG"
 printf '%s' "rootless-identity"
 SCRIPT
 cat > bin/workspace-database-hook <<'SCRIPT'
@@ -335,8 +335,28 @@ WORKSPACE_ROOT_PATH="/stale/exported/root" \
   WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 rootless_bootstrap_status=$?
 assert_equal "rootless provider bootstrap succeeds" "0" "$rootless_bootstrap_status"
-assert_equal "identity hook receives no empty root variable" "identity:unset" "$(sed -n '1p' "$log")"
+assert_equal "identity hook retains its set-empty root contract" "identity:x:" "$(sed -n '1p' "$log")"
 assert_equal "database hook receives no empty root variable" "database:unset" "$(sed -n '2p' "$log")"
+
+# A provider-supplied path must name a directory before the database hook can
+# use it as an original checkout.
+paths=$(make_bootstrap_app "database-hook-with-stale-root")
+app_dir=${paths%%|*}
+log="$TEST_TMP/database-hook-with-stale-root.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x bin/workspace-database-hook
+
+CONDUCTOR_ROOT_PATH="$TEST_TMP/missing-root" \
+  CONDUCTOR_WORKSPACE_NAME="stale-root-provider" \
+  WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+stale_root_bootstrap_status=$?
+assert_equal "stale-root provider bootstrap succeeds" "0" "$stale_root_bootstrap_status"
+assert_equal "database hook does not receive a stale root path" "database:unset" "$(sed -n '1p' "$log")"
 
 # Invalid stable identity fails before project setup or database preparation.
 paths=$(make_bootstrap_app "invalid-stable-identity")

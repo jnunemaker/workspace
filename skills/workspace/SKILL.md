@@ -41,7 +41,7 @@ The project customizes the lifecycle by dropping executable scripts into its own
 
 | Hook | When it runs | How |
 | --- | --- | --- |
-| `bin/workspace-identity-hook` | Before isolated sibling lifecycle work when neither `.conductor-workspace` nor `.workspace` exists; print the established name without `_` | Executed with `WORKSPACE_PROVIDER` and derived `WORKSPACE_NAME` exported; receives `WORKSPACE_ROOT_PATH` only when Workspace resolves a usable path; empty output defers to provider/Git defaults; never called for the root/default checkout |
+| `bin/workspace-identity-hook` | Before isolated sibling lifecycle work when neither `.conductor-workspace` nor `.workspace` exists; print the established name without `_` | Executed with `WORKSPACE_PROVIDER`, derived `WORKSPACE_NAME`, and `WORKSPACE_ROOT_PATH` exported; the root value is empty when unavailable; empty output defers to provider/Git defaults; never called for the root/default checkout |
 | `bin/workspace-database-hook` | When present, before project setup; can read `WORKSPACE_DB_SUFFIX` and, while the hook is running, a resolved `WORKSPACE_ROOT_PATH`; use the root path to copy database configuration when needed | Executed from the workspace checkout, not the original checkout |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX`, before Workspace prepares dev/test databases; prevents the legacy setup fallback in managed siblings | Executed |
 | `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
@@ -54,11 +54,11 @@ A hook that isn't executable (`chmod +x`) won't run. Every hook is optional;
 
 `WORKSPACE_ROOT_PATH` is the path to the original checkout. A database hook can
 use it to copy a file such as `config/database.yml`, even though the hook runs
-from the workspace checkout. Workspace provides the variable only while an
-identity or database hook is running and only when it resolved a usable path;
-otherwise the variable is unset. Later hooks and the app should not expect it.
-The hook receives the same path Workspace already found; Workspace does not
-change the path before passing it to the hook.
+from the workspace checkout. An identity hook always receives the variable for
+compatibility, with an empty value when no root is available. A database hook
+receives it only when the resolved path names an existing directory; otherwise
+the variable is unset. Later hooks and the app should not expect it. Workspace
+does not change the path before passing it to a hook.
 
 ## Key concepts
 
@@ -146,4 +146,4 @@ cd .. && rm -rf myapp-feature-x
 
 - Source: <https://github.com/jnunemaker/workspace>
 - Local install: `~/.workspace` (CLI in `~/.workspace/bin/workspace`, lib scripts in `~/.workspace/lib/`)
-- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_ROOT_PATH` (usable path to the original checkout; provided only to identity and database hooks when Workspace resolves one, and unset otherwise), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)
+- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_ROOT_PATH` (path to the original checkout; exported to the identity hook, empty when unavailable, and to the database hook only when it names an existing directory), `WORKSPACE_APP_URL` (optional displayed URL from the run hook)
