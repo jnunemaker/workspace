@@ -295,9 +295,8 @@ printf '%s' "stable-worktree-id"
 SCRIPT
 chmod +x bin/workspace-database-hook bin/workspace-identity-hook
 
-WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "display-name" "$log"
-first_bootstrap_status=$?
-assert_equal "first identity-hook bootstrap succeeds" "0" "$first_bootstrap_status"
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" \
+  assert_true "first identity-hook bootstrap succeeds" run_bootstrap "$root_dir" "display-name" "$log"
 assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
 assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 assert_equal "identity hook receives root" "identity:$root_dir" "$(sed -n '1p' "$log")"
@@ -305,15 +304,14 @@ assert_equal "first database hook receives root and pinned suffix" "database:_st
 assert_equal "first setup does not inherit root path" "setup:_stable-worktree-id:unset" "$(sed -n '3p' "$log")"
 
 : > "$log"
-WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
-repeated_bootstrap_status=$?
-assert_equal "repeated identity-hook bootstrap succeeds" "0" "$repeated_bootstrap_status"
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" \
+  assert_true "repeated identity-hook bootstrap succeeds" run_bootstrap "$root_dir" "renamed-display-name" "$log"
 assert_equal "repeated database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
 assert_equal "repeated bootstrap keeps pinned suffix without root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
 assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
 
-# A provider may supply a workspace name without a root checkout. Hooks only
-# receive the root variable when Workspace has a usable path.
+# A provider may supply a workspace name without a root checkout. The identity
+# hook keeps its empty-value contract while the database hook sees no variable.
 paths=$(make_bootstrap_app "database-hook-without-root")
 app_dir=${paths%%|*}
 log="$TEST_TMP/database-hook-without-root.log"
