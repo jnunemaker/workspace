@@ -54,6 +54,7 @@ assert_equal "default becomes empty" "" "$WORKSPACE_NAME"
 
 # No vars set → empty
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
+cd "$TEST_TMP"
 resolve_workspace
 assert_equal "no vars → empty name" "" "$WORKSPACE_NAME"
 assert_equal "no vars → empty root" "" "$WORKSPACE_ROOT_PATH"
