@@ -290,6 +290,7 @@ SCRIPT
 cat > bin/workspace-identity-hook <<'SCRIPT'
 #!/bin/sh
 printf 'called\n' >> "$WORKSPACE_IDENTITY_HOOK_LOG"
+printf 'identity:%s\n' "$WORKSPACE_ROOT_PATH" >> "$WORKSPACE_TEST_LOG"
 printf '%s' "stable-worktree-id"
 SCRIPT
 chmod +x bin/workspace-database-hook bin/workspace-identity-hook
@@ -299,8 +300,9 @@ first_bootstrap_status=$?
 assert_equal "first identity-hook bootstrap succeeds" "0" "$first_bootstrap_status"
 assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
 assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
-assert_equal "first database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
-assert_equal "first setup does not inherit root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
+assert_equal "identity hook receives root" "identity:$root_dir" "$(sed -n '1p' "$log")"
+assert_equal "first database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '2p' "$log")"
+assert_equal "first setup does not inherit root path" "setup:_stable-worktree-id:unset" "$(sed -n '3p' "$log")"
 
 : > "$log"
 WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
