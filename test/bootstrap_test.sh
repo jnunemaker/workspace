@@ -231,7 +231,8 @@ PATH="$WORKSPACE_TEST_TOOLCHAIN_BIN:$PATH"
 export PATH
 printf 'root-environment:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_NAME" >> "$WORKSPACE_TEST_LOG"
 WORKSPACE_DB_SUFFIX=_wrong-hook-suffix
-export WORKSPACE_DB_SUFFIX
+WORKSPACE_REGISTERED_PORT=51900
+export WORKSPACE_DB_SUFFIX WORKSPACE_REGISTERED_PORT
 SCRIPT
 cat > bin/setup <<'SCRIPT'
 #!/usr/bin/env workspace-test-runtime
@@ -239,6 +240,11 @@ if env | grep -q '^WORKSPACE_DB_SUFFIX='; then
   printf 'root-setup:set:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
 else
   printf 'root-setup:unset\n' >> "$WORKSPACE_TEST_LOG"
+fi
+if env | grep -q '^WORKSPACE_REGISTERED_PORT='; then
+  printf 'registered-port:set:%s\n' "$WORKSPACE_REGISTERED_PORT" >> "$WORKSPACE_TEST_LOG"
+else
+  printf 'registered-port:unset\n' >> "$WORKSPACE_TEST_LOG"
 fi
 SCRIPT
 chmod +x bin/setup
@@ -250,7 +256,8 @@ assert_true "environment hook supplies root bootstrap toolchain" env \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "root environment hook runs before ordinary setup" \
   "root-environment:conductor:
-root-setup:unset" "$(cat "$log")"
+root-setup:unset
+registered-port:unset" "$(cat "$log")"
 
 # A failed sourced environment hook is a hard boundary: partial PATH changes
 # do not permit setup or database work to continue.
