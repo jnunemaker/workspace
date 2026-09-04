@@ -209,13 +209,13 @@ chmod +x "$toolchain_bin/workspace-test-runtime" bin/workspace-setup-hook bin/ra
 
 assert_true "environment hook supplies managed bootstrap toolchain" env \
   PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
-  CONDUCTOR_WORKSPACE_NAME="environment-workspace" \
+  CONDUCTOR_WORKSPACE_NAME="environment-workspace" CONDUCTOR_PORT=51000 \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "environment hook receives resolved provider state" \
   "environment:conductor:$root_dir:environment-workspace" "$(sed -n '1p' "$log")"
 assert_equal "environment hook cannot replace provider lifecycle state" \
-  "setup:conductor:$root_dir:environment-workspace:_environment-workspace:$root_dir:environment-workspace:" \
+  "setup:conductor:$root_dir:environment-workspace:_environment-workspace:$root_dir:environment-workspace:51000" \
   "$(sed -n '2p' "$log")"
 assert_equal "environment toolchain reaches Rails preparation" \
   "rails:development:_environment-workspace:db:prepare
