@@ -215,6 +215,86 @@ assert_true "archive explains dotenv failure" grep -q 'Could not load .env.*arch
 assert_equal "failed dotenv reaches no database command" "" "$(cat "$archive_rails_log")"
 assert_equal "failed dotenv reaches no port sweep" "" "$(cat "$archive_lsof_log")"
 
+# One source-only environment hook activates the same project toolchain for
+# Foreman startup, the run hook, archive cleanup, and Rails database drops.
+toolchain_app=$(create_fake_app "environment-toolchain")
+toolchain_root=$(create_fake_root "environment-toolchain")
+toolchain_bin="$TEST_TMP/lifecycle-toolchain-bin"
+toolchain_log="$TEST_TMP/lifecycle-toolchain.log"
+mkdir -p "$toolchain_bin" "$toolchain_app/config"
+cd "$toolchain_app"
+cat > config/database.yml <<'YAML'
+development:
+  database: toolchain_development
+test:
+  database: toolchain_test
+YAML
+cat > bin/workspace-environment-hook <<'SCRIPT'
+PATH="$WORKSPACE_TEST_TOOLCHAIN_BIN:$PATH"
+export PATH
+printf 'environment:%s:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_ROOT_PATH" "$WORKSPACE_NAME" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+SCRIPT
+cat > "$toolchain_bin/workspace-test-runtime" <<'SCRIPT'
+#!/bin/sh
+script="$1"
+shift
+exec /bin/sh "$script" "$@"
+SCRIPT
+cat > "$toolchain_bin/lsof" <<'SCRIPT'
+#!/bin/sh
+exit 1
+SCRIPT
+cat > "$toolchain_bin/foreman" <<'SCRIPT'
+#!/bin/sh
+printf 'foreman:%s:%s:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_ROOT_PATH" "$WORKSPACE_NAME" "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+SCRIPT
+cat > bin/workspace-run-hook <<'SCRIPT'
+#!/bin/sh
+workspace-test-runtime bin/workspace-toolchain-check run-hook
+SCRIPT
+cat > bin/workspace-toolchain-check <<'SCRIPT'
+#!/bin/sh
+printf '%s:%s\n' "$1" "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+SCRIPT
+cat > bin/workspace-archive-hook <<'SCRIPT'
+#!/usr/bin/env workspace-test-runtime
+printf 'archive-hook:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+SCRIPT
+cat > bin/rails <<'SCRIPT'
+#!/usr/bin/env workspace-test-runtime
+printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+SCRIPT
+chmod +x "$toolchain_bin/workspace-test-runtime" "$toolchain_bin/lsof" \
+  "$toolchain_bin/foreman" bin/workspace-run-hook bin/workspace-toolchain-check \
+  bin/workspace-archive-hook bin/rails
+
+assert_true "environment hook supplies run and Foreman toolchain" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$toolchain_root" \
+  CONDUCTOR_WORKSPACE_NAME="toolchain-workspace" CONDUCTOR_PORT=51700 \
+  WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
+  WORKSPACE_TEST_TOOLCHAIN_LOG="$toolchain_log" \
+  /bin/sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_equal "run environment reaches run hook and Foreman with provider state" \
+  "environment:conductor:$toolchain_root:toolchain-workspace
+run-hook:_toolchain-workspace
+foreman:conductor:$toolchain_root:toolchain-workspace:_toolchain-workspace" \
+  "$(cat "$toolchain_log")"
+
+: > "$toolchain_log"
+printf '%s' "toolchain-workspace" > .workspace
+assert_true "environment hook supplies archive cleanup toolchain" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$toolchain_root" \
+  CONDUCTOR_WORKSPACE_NAME="toolchain-workspace" CONDUCTOR_PORT=51700 \
+  WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
+  WORKSPACE_TEST_TOOLCHAIN_LOG="$toolchain_log" \
+  /bin/sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
+assert_equal "archive environment reaches hook and both Rails drops" \
+  "environment:conductor:$toolchain_root:toolchain-workspace
+archive-hook:_toolchain-workspace
+rails:development:_toolchain-workspace:db:drop
+rails:test:_toolchain-workspace:db:drop" "$(cat "$toolchain_log")"
+assert_false "sourced environment hook remains non-executable" [ -x bin/workspace-environment-hook ]
+
 # Without an override, preserve the historical generic URL.
 paths=$(make_run_app "url-fallback")
 app_dir=${paths%%|*}

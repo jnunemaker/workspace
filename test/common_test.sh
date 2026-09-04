@@ -54,10 +54,13 @@ assert_equal "default becomes empty" "" "$WORKSPACE_NAME"
 
 # No vars set → empty
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME
-cd "$TEST_TMP"
+no_provider_dir="$TEST_TMP/no-provider"
+mkdir -p "$no_provider_dir"
+cd "$no_provider_dir"
 resolve_workspace
 assert_equal "no vars → empty name" "" "$WORKSPACE_NAME"
 assert_equal "no vars → empty root" "" "$WORKSPACE_ROOT_PATH"
+cd "$TEST_DIR"
 
 # Linked Git worktrees are detected when provider variables are absent.
 git_root="$TEST_TMP/git-root"

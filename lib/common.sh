@@ -339,6 +339,80 @@ load_dotenv_defaults() {
   return "$_dotenv_status"
 }
 
+# Source project-owned toolchain setup into the current lifecycle shell. This
+# deliberately stays runtime-manager agnostic: projects may activate mise,
+# asdf, rbenv, Nix, or any other environment by updating PATH and exporting
+# variables here. The resolved lifecycle identity is exported first so the
+# hook can inspect it without needing provider-specific branching.
+source_workspace_environment_hook() {
+  local _environment_workspace_provider _environment_workspace_root_path
+  local _environment_workspace_name _environment_workspace_git_common_dir
+  local _environment_workspace_git_root_path _environment_workspace_invalid_name
+  local _environment_workspace_identity_source _environment_workspace_db_suffix
+  local _environment_workspace_db_suffix_set
+  local _environment_workspace_registered_port _environment_workspace_registered_port_set
+  local _environment_provider_exports _environment_hook_status _environment_errexit_set
+
+  [ -f bin/workspace-environment-hook ] || return 0
+
+  _environment_workspace_provider="$WORKSPACE_PROVIDER"
+  _environment_workspace_root_path="$WORKSPACE_ROOT_PATH"
+  _environment_workspace_name="$WORKSPACE_NAME"
+  _environment_workspace_git_common_dir="$WORKSPACE_GIT_COMMON_DIR"
+  _environment_workspace_git_root_path="$WORKSPACE_GIT_ROOT_PATH"
+  _environment_workspace_invalid_name="${WORKSPACE_INVALID_NAME:-}"
+  _environment_workspace_identity_source="${WORKSPACE_IDENTITY_SOURCE:-}"
+  _environment_workspace_db_suffix="${WORKSPACE_DB_SUFFIX:-}"
+  _environment_workspace_db_suffix_set="${WORKSPACE_DB_SUFFIX+x}"
+  _environment_workspace_registered_port="${WORKSPACE_REGISTERED_PORT:-}"
+  _environment_workspace_registered_port_set="${WORKSPACE_REGISTERED_PORT+x}"
+  _environment_provider_exports=$(export -p | grep -E \
+    ' (WORKSPACE_PORT|SUPERCONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT)|SUPERSET_(ROOT_PATH|WORKSPACE_NAME|PORT)|CONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT))=' \
+    || true)
+  case "$-" in
+    *e*) _environment_errexit_set=1 ;;
+    *) _environment_errexit_set=0 ;;
+  esac
+
+  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
+  if . ./bin/workspace-environment-hook; then
+    _environment_hook_status=0
+  else
+    _environment_hook_status=$?
+  fi
+  set +e
+
+  WORKSPACE_PROVIDER="$_environment_workspace_provider"
+  WORKSPACE_ROOT_PATH="$_environment_workspace_root_path"
+  WORKSPACE_NAME="$_environment_workspace_name"
+  WORKSPACE_GIT_COMMON_DIR="$_environment_workspace_git_common_dir"
+  WORKSPACE_GIT_ROOT_PATH="$_environment_workspace_git_root_path"
+  WORKSPACE_INVALID_NAME="$_environment_workspace_invalid_name"
+  WORKSPACE_IDENTITY_SOURCE="$_environment_workspace_identity_source"
+  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
+  if [ -n "$_environment_workspace_db_suffix_set" ]; then
+    WORKSPACE_DB_SUFFIX="$_environment_workspace_db_suffix"
+    export WORKSPACE_DB_SUFFIX
+  else
+    unset WORKSPACE_DB_SUFFIX
+  fi
+  unset WORKSPACE_REGISTERED_PORT
+  if [ -n "$_environment_workspace_registered_port_set" ]; then
+    WORKSPACE_REGISTERED_PORT="$_environment_workspace_registered_port"
+  fi
+
+  unset WORKSPACE_PORT
+  unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_PORT
+  unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME SUPERSET_PORT
+  unset CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_PORT
+  [ -z "$_environment_provider_exports" ] || eval "$_environment_provider_exports"
+
+  if [ "$_environment_errexit_set" -eq 1 ]; then
+    set -e
+  fi
+  return "$_environment_hook_status"
+}
+
 is_codex_git_workspace() {
   local _codex_home _codex_worktrees _git_worktree_path
 
