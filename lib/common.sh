@@ -346,7 +346,7 @@ source_workspace_environment_hook() {
   local _environment_workspace_identity_source _environment_workspace_db_suffix
   local _environment_workspace_db_suffix_set
   local _environment_workspace_registered_port _environment_workspace_registered_port_set
-  local _environment_provider_exports
+  local _environment_provider_exports _environment_hook_status _environment_errexit_set
 
   [ -f bin/workspace-environment-hook ] || return 0
 
@@ -364,9 +364,18 @@ source_workspace_environment_hook() {
   _environment_provider_exports=$(export -p | grep -E \
     ' (WORKSPACE_PORT|SUPERCONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT)|SUPERSET_(ROOT_PATH|WORKSPACE_NAME|PORT)|CONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT))=' \
     || true)
+  case "$-" in
+    *e*) _environment_errexit_set=1 ;;
+    *) _environment_errexit_set=0 ;;
+  esac
 
   export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
-  . ./bin/workspace-environment-hook
+  if . ./bin/workspace-environment-hook; then
+    _environment_hook_status=0
+  else
+    _environment_hook_status=$?
+  fi
+  set +e
 
   WORKSPACE_PROVIDER="$_environment_workspace_provider"
   WORKSPACE_ROOT_PATH="$_environment_workspace_root_path"
@@ -392,6 +401,11 @@ source_workspace_environment_hook() {
   unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME SUPERSET_PORT
   unset CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_PORT
   [ -z "$_environment_provider_exports" ] || eval "$_environment_provider_exports"
+
+  if [ "$_environment_errexit_set" -eq 1 ]; then
+    set -e
+  fi
+  return "$_environment_hook_status"
 }
 
 is_codex_git_workspace() {

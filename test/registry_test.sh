@@ -116,6 +116,8 @@ rm -f "$collision_bootstrap_log"
 # have the authoritative record needed to recover them.
 cat > "$conflicting_worktree/bin/workspace-environment-hook" <<'EOF'
 printf 'environment\n' >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+WORKSPACE_GIT_COMMON_DIR=/wrong/hook/git-common-dir
+set +e
 return 43
 EOF
 assert_false "failing Git environment hook reports bootstrap failure" env WORKSPACE_PORT=51410 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
@@ -123,6 +125,7 @@ assert_true "failing environment hook runs after cleanup registration" [ -f "$co
 assert_equal "failed environment hook retains its reserved cleanup port" "51410" "$(sed -n '4p' "$conflicting_registry_entry")"
 assert_equal "failing environment hook runs before project setup" "environment" "$(cat "$collision_bootstrap_log")"
 assert_false "failed environment hook does not write a stable marker" [ -e .workspace ]
+assert_false "failed environment hook restores state before releasing registry lock" [ -e "$git_root/.git/workspace/prune.lock" ]
 unregister_workspace
 rm -f "$collision_bootstrap_log" bin/workspace-environment-hook
 
