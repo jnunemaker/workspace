@@ -3,16 +3,18 @@
 #
 # Flow:
 #   1. Resolve workspace name and root path
-#   2. If default/main branch: run the app's ordinary setup script and exit
+#   2. If default/main branch: source the environment hook, run ordinary setup,
+#      and exit
 #   3. Sanitize workspace name (superset names only)
 #   4. Symlink shared files from root
 #   5. Export WORKSPACE_DB_SUFFIX and reserve ports
-#   6. Materialize and patch database.yml when possible
-#   7. Run bin/workspace-setup-hook, or fall back to the app setup script
+#   6. Source bin/workspace-environment-hook when present
+#   7. Materialize and patch database.yml when possible
+#   8. Run bin/workspace-setup-hook, or fall back to the app setup script
 #      when the dedicated hook is absent, then patch generated config
-#   8. Prepare workspace-specific databases idempotently
-#   9. Write .workspace file
-#  10. Run bin/workspace-bootstrap-hook if it exists
+#   9. Prepare workspace-specific databases idempotently
+#  10. Write .workspace file
+#  11. Run bin/workspace-bootstrap-hook if it exists
 
 set -e
 
@@ -25,10 +27,12 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] && {
   echo "Usage: workspace bootstrap"
   echo ""
-  echo "Root/default checkout: runs the project's ordinary setup script only."
-  echo "Managed sibling ordering: shared files → WORKSPACE_DB_SUFFIX → database"
-  echo "configuration hook → workspace setup hook (or legacy setup fallback) →"
-  echo "database preparation → optional seed and bootstrap hooks."
+  echo "Root/default checkout: sources the environment hook, then runs the"
+  echo "project's ordinary setup script only."
+  echo "Managed sibling ordering: shared files → WORKSPACE_DB_SUFFIX →"
+  echo "environment hook → database configuration hook → workspace setup hook (or"
+  echo "legacy setup fallback) → database preparation → optional seed and"
+  echo "bootstrap hooks."
   echo ""
   echo "Workspace never runs bin/update."
   exit 0
@@ -73,6 +77,8 @@ fi
 # ── Default workspace: just run setup, no isolation ──────────────
 
 if is_default_workspace; then
+  unset WORKSPACE_DB_SUFFIX
+  source_workspace_environment_hook
   if [ -n "$SETUP_SCRIPT" ]; then
     header "Running project setup"
     $SETUP_SCRIPT
@@ -193,6 +199,11 @@ load_dotenv_defaults ./.env
 # ── Export workspace DB env vars ─────────────────────────────────
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+
+# Project runtime activation must happen before any project-owned hook or
+# runtime-dependent command. Because this file is sourced, PATH and other
+# exports remain active through setup, Rails preparation, and later hooks.
+source_workspace_environment_hook
 
 # Validate and publish the port reservation before project hooks or database
 # work. If bootstrap later fails, the record lets prune clean up any resources

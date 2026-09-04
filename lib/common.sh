@@ -334,6 +334,52 @@ load_dotenv_defaults() {
   return "$_dotenv_status"
 }
 
+# Source project-owned toolchain setup into the current lifecycle shell. This
+# deliberately stays runtime-manager agnostic: projects may activate mise,
+# asdf, rbenv, Nix, or any other environment by updating PATH and exporting
+# variables here. The resolved lifecycle identity is exported first so the
+# hook can inspect it without needing provider-specific branching.
+source_workspace_environment_hook() {
+  local _environment_workspace_provider _environment_workspace_root_path
+  local _environment_workspace_name _environment_workspace_git_common_dir
+  local _environment_workspace_git_root_path _environment_workspace_invalid_name
+  local _environment_workspace_identity_source _environment_workspace_db_suffix
+  local _environment_provider_exports
+
+  [ -f bin/workspace-environment-hook ] || return 0
+
+  _environment_workspace_provider="$WORKSPACE_PROVIDER"
+  _environment_workspace_root_path="$WORKSPACE_ROOT_PATH"
+  _environment_workspace_name="$WORKSPACE_NAME"
+  _environment_workspace_git_common_dir="$WORKSPACE_GIT_COMMON_DIR"
+  _environment_workspace_git_root_path="$WORKSPACE_GIT_ROOT_PATH"
+  _environment_workspace_invalid_name="${WORKSPACE_INVALID_NAME:-}"
+  _environment_workspace_identity_source="${WORKSPACE_IDENTITY_SOURCE:-}"
+  _environment_workspace_db_suffix="${WORKSPACE_DB_SUFFIX:-}"
+  _environment_provider_exports=$(export -p | grep -E \
+    ' (WORKSPACE_PORT|SUPERCONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT)|SUPERSET_(ROOT_PATH|WORKSPACE_NAME|PORT)|CONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT))=' \
+    || true)
+
+  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
+  . ./bin/workspace-environment-hook
+
+  WORKSPACE_PROVIDER="$_environment_workspace_provider"
+  WORKSPACE_ROOT_PATH="$_environment_workspace_root_path"
+  WORKSPACE_NAME="$_environment_workspace_name"
+  WORKSPACE_GIT_COMMON_DIR="$_environment_workspace_git_common_dir"
+  WORKSPACE_GIT_ROOT_PATH="$_environment_workspace_git_root_path"
+  WORKSPACE_INVALID_NAME="$_environment_workspace_invalid_name"
+  WORKSPACE_IDENTITY_SOURCE="$_environment_workspace_identity_source"
+  WORKSPACE_DB_SUFFIX="$_environment_workspace_db_suffix"
+  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME WORKSPACE_DB_SUFFIX
+
+  unset WORKSPACE_PORT
+  unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_PORT
+  unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME SUPERSET_PORT
+  unset CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_PORT
+  [ -z "$_environment_provider_exports" ] || eval "$_environment_provider_exports"
+}
+
 is_codex_git_workspace() {
   local _codex_home _codex_worktrees _git_worktree_path
 

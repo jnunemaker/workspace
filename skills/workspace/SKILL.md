@@ -27,9 +27,9 @@ Strong signals you're in workspace territory: a `.workspace` file in the repo, a
 | Command | When to run | What it does |
 | --- | --- | --- |
 | `workspace init` | During onboarding, or later when intentionally refreshing generated files; run from the root checkout | Patches `config/database.yml`, creates/updates `bin/workspace` plus `.workspace-version`, and creates/updates recognized provider configs to use the shim. Does not scaffold optional hooks. Idempotent. |
-| `bin/workspace bootstrap` | In each manager-created sibling or linked checkout created with `git worktree add` | Links untracked shared files, exports the suffix, runs the dedicated setup hook (or legacy setup fallback), prepares databases, writes `.workspace`, and runs optional post-setup hooks. In root, only runs ordinary setup. Never runs `bin/update`. |
-| `bin/workspace run` | To start the dev server in a sibling | Loads linked `.env` defaults, exports ports and `WORKSPACE_DB_SUFFIX`, sources `bin/workspace-run-hook`, displays its optional `WORKSPACE_APP_URL`, then starts foreman. |
-| `bin/workspace archive` | When you're done with a sibling workspace | Runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, drops the suffixed DBs. |
+| `bin/workspace bootstrap` | In each manager-created sibling or linked checkout created with `git worktree add` | Links untracked shared files, exports the suffix, sources the environment hook, runs the dedicated setup hook (or legacy setup fallback), prepares databases, writes `.workspace`, and runs optional post-setup hooks. In root, sources the environment hook before ordinary setup. Never runs `bin/update`. |
+| `bin/workspace run` | To start the dev server in a sibling | Loads linked `.env` defaults, exports ports and `WORKSPACE_DB_SUFFIX`, sources the environment hook, sources `bin/workspace-run-hook`, displays its optional `WORKSPACE_APP_URL`, then starts foreman. |
+| `bin/workspace archive` | When you're done with a sibling workspace | Sources the environment hook, runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, and drops the suffixed DBs. |
 | `bin/workspace prune` | From the root or any remaining checkout after an external tool removes Git worktrees | Reconciles the shared Git registry and archives resources for worktrees that no longer exist. Safe to re-run. |
 | `bin/workspace info` | To inspect any initialized checkout | Prints provider, name, root, suffix, URL, and the allocated 10-port block. |
 | `bin/workspace update` | To update the shared CLI after initialization | Pulls the latest installed CLI and refreshes the linked agent skill. It bypasses the repository minimum-version check so an outdated install can update, but does not rewrite application files. |
@@ -37,11 +37,12 @@ Strong signals you're in workspace territory: a `.workspace` file in the repo, a
 
 ## Lifecycle hooks
 
-The project customizes the lifecycle by dropping executable scripts into its own `bin/` directory. **When debugging unexpected workspace behavior, check these first** — they hold the project-specific magic the CLI doesn't know about.
+The project customizes the lifecycle with scripts in its own `bin/` directory. Executed hooks need executable mode; sourced hooks only need to be readable. **When debugging unexpected workspace behavior, check these first** — they hold the project-specific magic the CLI doesn't know about.
 
 | Hook | When it runs | How |
 | --- | --- | --- |
 | `bin/workspace-identity-hook` | Before isolated sibling lifecycle work when neither `.conductor-workspace` nor `.workspace` exists; print the established name without `_` | Executed with `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and derived `WORKSPACE_NAME` exported; empty output defers to provider/Git defaults; never called for the root/default checkout |
+| `bin/workspace-environment-hook` | Before project-owned or runtime-dependent bootstrap, run, and archive work; also before ordinary root setup | **Sourced** after resolved provider state is exported; PATH and other exports persist into setup, Rails, Foreman, and cleanup |
 | `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; materialize local `database.yml` here when needed | Executed |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX`, before Workspace prepares dev/test databases; prevents the legacy setup fallback in managed siblings | Executed |
 | `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
@@ -49,12 +50,17 @@ The project customizes the lifecycle by dropping executable scripts into its own
 | `bin/workspace-run-hook` | Before foreman starts (after dotenv, ports, and `WORKSPACE_DB_SUFFIX`) | **Sourced** — can export server variables and set `WORKSPACE_APP_URL` for display |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
 
-A hook that isn't executable (`chmod +x`) won't run. Every hook is optional;
-`workspace init` does not create empty hook files.
+Every hook is optional, and `workspace init` does not create empty hook files.
+The environment and run hooks are sourced; all others are executed and require
+`chmod +x`. Keep sourced hooks POSIX `/bin/sh` compatible and export changes
+that subprocesses need. Use the environment hook for project-owned activation
+of mise, asdf, rbenv, Nix, direnv, or another manager; Workspace does not assume
+or require a specific runtime manager. A nonzero hook result stops the current
+lifecycle.
 
 ## Key concepts
 
-- **Root workspace**: the original checkout. It owns shared untracked config and has no `.workspace` file. Normal development remains `bin/setup` once, `bin/update` after pulls, and `bin/dev` to run. `workspace bootstrap` there only uses ordinary setup detection — no managed hooks, linking, suffixing, database preparation, or `bin/update`.
+- **Root workspace**: the original checkout. It owns shared untracked config and has no `.workspace` file. Normal development remains `bin/setup` once, `bin/update` after pulls, and `bin/dev` to run. `workspace bootstrap` there sources the environment hook before ordinary setup — no managed-only hooks, linking, suffixing, database preparation, or `bin/update`.
 - **Sibling workspace**: any other checkout. Has a `.workspace` file containing its name. Gets `WORKSPACE_DB_SUFFIX=_<name>` exported during bootstrap and run, which the `database.yml` patch uses to suffix DB names (`myapp_development` → `myapp_development_<name>`).
 - **Ad-hoc Rails commands**: bootstrap resolves the full identity precedence and persists the chosen name to `.workspace`. The generated `database.yml` helper uses `WORKSPACE_DB_SUFFIX` when exported and otherwise reads only that persisted `.workspace` marker. It does not directly inspect `.conductor-workspace`, provider variables, Git metadata, or the identity hook. Run bootstrap first so a sibling has a stable marker before using `bin/rails console`, migrations, or runners directly.
 - **Workspace name**: resolved consistently by every lifecycle command. A non-empty `.conductor-workspace` wins for an existing integration, followed by `.workspace`, `bin/workspace-identity-hook`, provider variables, then the stable ID of any linked Git worktree. Markerless Superset identities retain the provider's historical 45-character limit; Superconductor and generic Git identities use 40 characters. The main checkout remains unsuffixed.
@@ -128,7 +134,7 @@ cd .. && rm -rf myapp-feature-x
 - Tracked files such as `.tool-versions` are never replaced with root symlinks. Shared directories such as `.bundle/` and `storage/` are also preserved when they contain tracked descendants; untracked-only directories retain the historical root-linking behavior.
 - `.env` is *symlinked*, not copied. Edits in any sibling affect the shared file.
 - The `database.yml` patch matches a specific shape. Hand-edited unusual `database.yml` files may not patch cleanly — check the diff after `init`.
-- `workspace-run-hook` is **sourced**, the others are **executed**. Use `export` in run-hook; use plain commands elsewhere. Set `WORKSPACE_APP_URL` there when the generic localhost URL is inaccurate.
+- `workspace-environment-hook` and `workspace-run-hook` are **sourced**; the others are **executed**. Use `export` in sourced hooks; use plain commands elsewhere. Keep toolchain activation in the environment hook and set `WORKSPACE_APP_URL` in the run hook when the generic localhost URL is inaccurate.
 - Generated provider configs call `bin/workspace`, which tries PATH and then `${WORKSPACE_HOME:-$HOME/.workspace}`. It reports an install command when missing and an exact update command when older than `.workspace-version`; it never downloads code automatically.
 - `.workspace` must be non-empty; an empty `.conductor-workspace` retains its legacy unpinned behavior. Both marker paths must be regular, non-symlink files. Reserved, multiline, and control-character identities fail closed instead of silently selecting another database. Existing non-empty `.conductor-workspace` files remain authoritative and are mirrored to `.workspace` after successful bootstrap.
 - Generic Git worktrees are registered so cleanup can recover after an external tool deletes their directories or native Codex cleanup is interrupted. Run `bin/workspace prune` from a surviving checkout to reconcile immediately; the SessionEnd deferred prune and normal bootstrap/run reconciliation are fallback paths. Archive cleans only its current workspace.

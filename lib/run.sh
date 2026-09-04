@@ -7,10 +7,11 @@
 #   3. Resolve ports from WORKSPACE_PORT, Git registration, provider input,
 #      or the deterministic/default fallback
 #   4. Export port and DB env vars
-#   5. Sweep ports (kill stale processes)
-#   6. Source bin/workspace-run-hook if it exists
-#   7. Display the hook-provided application URL or the generic fallback
-#   8. Start server via foreman
+#   5. Source bin/workspace-environment-hook if it exists
+#   6. Sweep ports (kill stale processes)
+#   7. Source bin/workspace-run-hook if it exists
+#   8. Display the hook-provided application URL or the generic fallback
+#   9. Start server via foreman
 
 set -e
 
@@ -35,7 +36,6 @@ sanitize_workspace_name
 resolve_workspace_identity
 detect_caddy
 detect_vite
-detect_foreman
 
 # Foreman's env-file values override its parent environment. Load the linked
 # dotenv here instead, restoring values already exported by the manager. This
@@ -96,10 +96,10 @@ else
   unset WORKSPACE_DB_SUFFIX
 fi
 
-# A sourced run hook below can deliberately override manager or dotenv values.
-if is_default_workspace; then
-  unset WORKSPACE_DB_SUFFIX
-fi
+# Activate the project toolchain before resolving or starting Foreman. The
+# separate run hook remains later in the lifecycle for server-specific values.
+source_workspace_environment_hook
+detect_foreman
 
 # ── Sweep ports ──────────────────────────────────────────────────
 

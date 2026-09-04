@@ -73,15 +73,17 @@ Run `bin/workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` 
 1. Resolve one stable database identity from existing markers, a project hook, provider variables, or Git worktree metadata.
 2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
 3. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
-4. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
-5. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
-6. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
-7. Run the optional seed hook, atomically write `.workspace`, then run the optional bootstrap hook.
+4. Source `bin/workspace-environment-hook` when present so project-selected PATH and toolchain state apply to every later project command.
+5. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
+6. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
+7. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
+8. Run the optional seed hook, atomically write `.workspace`, then run the optional bootstrap hook.
 
 The root/default checkout keeps the normal application-development contract:
 `bin/setup` for first setup, `bin/update` after pulls, and `bin/dev` to run.
-`workspace bootstrap` there only falls back to ordinary setup detection; it does
-not run managed hooks, link files, suffix databases, or call `bin/update`.
+`workspace bootstrap` there sources the environment hook before ordinary setup;
+it does not run managed-only hooks, link files, suffix databases, or call
+`bin/update`.
 Workspace lifecycle commands never invoke `bin/update`.
 
 `workspace init` creates a committed project entrypoint at `bin/workspace` and a
@@ -195,11 +197,12 @@ native cleanup could not complete.
 
 ## Hooks
 
-Place any of these in your project's `bin/` directory to customize the workspace lifecycle. They must be executable (`chmod +x`).
+Place any of these in your project's `bin/` directory to customize the workspace lifecycle. Executed hooks must be executable (`chmod +x`); sourced hooks only need to be readable.
 
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
 | `bin/workspace-identity-hook` | Before lifecycle work when neither identity marker exists; print an established workspace name without the `_` prefix | Executed; empty output defers to provider/Git defaults |
+| `bin/workspace-environment-hook` | After identity, dotenv, and suffix resolution but before project-owned or runtime-dependent bootstrap, run, and archive work; also before ordinary setup in the root checkout | Sourced into the lifecycle shell; exported PATH and variables persist |
 | `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; use it to materialize `config/database.yml` locally | Executed |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
@@ -217,9 +220,21 @@ hook retain the legacy setup fallback.
 All hooks are optional. `workspace init` deliberately does not scaffold empty
 hooks; add and commit only the hooks the project actually needs.
 
+Use `bin/workspace-environment-hook` when the project runtime is not already on
+the non-interactive shell's PATH. It is the project-owned integration point for
+mise, asdf, rbenv, Nix, direnv, or another toolchain manager; Workspace does not
+install, detect, or require any of them. Because the file is sourced by
+`/bin/sh`, keep it POSIX-shell compatible and use `export` for values that must
+reach setup scripts, Rails, Foreman, or cleanup hooks. A nonzero result stops
+the lifecycle before those commands run.
+
 Examples:
 
 ```sh
+# bin/workspace-environment-hook — activate the project's chosen toolchain
+# Use the manager's normal POSIX-shell activation here. For example:
+export PATH="$HOME/.local/share/mise/shims:$HOME/.rbenv/shims:$PATH"
+
 # bin/workspace-seed — load fixtures into the workspace database
 #!/bin/sh
 RAILS_ENV=development bin/rails db:fixtures:load

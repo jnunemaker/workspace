@@ -223,6 +223,7 @@ assert_true "bin/workspace is executable" [ -x bin/workspace ]
 assert_true "minimum version contract created" [ -s .workspace-version ]
 assert_false "optional seed hook is not scaffolded" [ -e bin/workspace-seed ]
 assert_false "optional setup hook is not scaffolded" [ -e bin/workspace-setup-hook ]
+assert_false "optional environment hook is not scaffolded" [ -e bin/workspace-environment-hook ]
 
 future_revision=ffffffffffffffffffffffffffffffffffffffff
 printf '%s\n' "$future_revision" > .workspace-version

@@ -4,9 +4,10 @@
 # Flow:
 #   1. Resolve workspace name
 #   2. If default/no workspace: print message and exit
-#   3. Run bin/workspace-archive-hook if it exists
-#   4. Sweep ports (kill processes)
-#   5. Drop workspace databases
+#   3. Source bin/workspace-environment-hook if it exists
+#   4. Run bin/workspace-archive-hook if it exists
+#   5. Sweep ports (kill processes)
+#   6. Drop workspace databases
 
 set -e
 
@@ -76,6 +77,12 @@ if [ "$_dotenv_status" -ne 0 ]; then
   exit 1
 fi
 
+# Archive hooks and Rails cleanup may need the same project toolchain used for
+# bootstrap and run. Export the suffix before sourcing so the hook sees the
+# complete resolved lifecycle environment.
+export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+source_workspace_environment_hook
+
 # ── Port derivation (same logic as run) ──────────────────────────
 
 if [ -n "${WORKSPACE_REGISTERED_PORT:-}" ]; then
@@ -94,7 +101,7 @@ fi
 
 if [ -x bin/workspace-archive-hook ]; then
   header "Running archive hook"
-  WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}" bin/workspace-archive-hook
+  bin/workspace-archive-hook
 fi
 
 # ── Sweep ports ──────────────────────────────────────────────────

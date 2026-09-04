@@ -158,6 +158,125 @@ bootstrap:_dedicated-hook" "$(cat "$log")"
 assert_false "dedicated hook prevents ordinary bin/setup" [ -f .ordinary-setup-called ]
 assert_false "workspace lifecycle never invokes bin/update" [ -f .update-called ]
 
+# A source-only environment hook can activate a project runtime without
+# Workspace knowing which toolchain manager produced it. Its PATH reaches the
+# dedicated setup hook and Workspace's own Rails database preparation.
+paths=$(make_bootstrap_app "environment-toolchain")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/environment-toolchain.log"
+toolchain_bin="$TEST_TMP/environment-toolchain-bin"
+mkdir -p "$toolchain_bin"
+cd "$app_dir"
+cat > config/database.yml <<'YAML'
+development:
+  database: environment_development
+test:
+  database: environment_test
+YAML
+cat > bin/workspace-environment-hook <<'SCRIPT'
+PATH="$WORKSPACE_TEST_TOOLCHAIN_BIN:$PATH"
+export PATH
+printf 'environment:%s:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_ROOT_PATH" "$WORKSPACE_NAME" >> "$WORKSPACE_TEST_LOG"
+WORKSPACE_PROVIDER=wrong-hook-provider
+WORKSPACE_ROOT_PATH=/wrong/hook/root
+WORKSPACE_NAME=wrong-hook-name
+WORKSPACE_DB_SUFFIX=_wrong-hook-suffix
+CONDUCTOR_ROOT_PATH=/wrong/raw/root
+CONDUCTOR_WORKSPACE_NAME=wrong-raw-name
+CONDUCTOR_PORT=1
+export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME WORKSPACE_DB_SUFFIX
+export CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_PORT
+SCRIPT
+cat > "$toolchain_bin/workspace-test-runtime" <<'SCRIPT'
+#!/bin/sh
+script="$1"
+shift
+exec /bin/sh "$script" "$@"
+SCRIPT
+cat > bin/workspace-setup-hook <<'SCRIPT'
+#!/usr/bin/env workspace-test-runtime
+printf 'setup:%s:%s:%s:%s:%s:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_ROOT_PATH" "$WORKSPACE_NAME" "$WORKSPACE_DB_SUFFIX" "$CONDUCTOR_ROOT_PATH" "$CONDUCTOR_WORKSPACE_NAME" "$CONDUCTOR_PORT" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > bin/rails <<'SCRIPT'
+#!/usr/bin/env workspace-test-runtime
+printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x "$toolchain_bin/workspace-test-runtime" bin/workspace-setup-hook bin/rails
+
+assert_true "environment hook supplies managed bootstrap toolchain" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  CONDUCTOR_WORKSPACE_NAME="environment-workspace" \
+  WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
+  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "environment hook receives resolved provider state" \
+  "environment:conductor:$root_dir:environment-workspace" "$(sed -n '1p' "$log")"
+assert_equal "environment hook cannot replace provider lifecycle state" \
+  "setup:conductor:$root_dir:environment-workspace:_environment-workspace:$root_dir:environment-workspace:" \
+  "$(sed -n '2p' "$log")"
+assert_equal "environment toolchain reaches Rails preparation" \
+  "rails:development:_environment-workspace:db:prepare
+rails:test:_environment-workspace:db:prepare" "$(sed -n '3,4p' "$log")"
+assert_false "sourced environment hook does not need executable mode" [ -x bin/workspace-environment-hook ]
+
+# The same source point applies to root/default bootstrap before ordinary
+# project setup, while retaining the root's unsuffixed database contract.
+paths=$(make_bootstrap_app "root-environment-toolchain")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/root-environment-toolchain.log"
+cd "$app_dir"
+cat > bin/workspace-environment-hook <<'SCRIPT'
+PATH="$WORKSPACE_TEST_TOOLCHAIN_BIN:$PATH"
+export PATH
+printf 'root-environment:%s:%s\n' "$WORKSPACE_PROVIDER" "$WORKSPACE_NAME" >> "$WORKSPACE_TEST_LOG"
+WORKSPACE_DB_SUFFIX=_wrong-hook-suffix
+export WORKSPACE_DB_SUFFIX
+SCRIPT
+cat > bin/setup <<'SCRIPT'
+#!/usr/bin/env workspace-test-runtime
+printf 'root-setup:%s\n' "${WORKSPACE_DB_SUFFIX:-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x bin/setup
+
+assert_true "environment hook supplies root bootstrap toolchain" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  CONDUCTOR_WORKSPACE_NAME="default" \
+  WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
+  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "root environment hook runs before ordinary setup" \
+  "root-environment:conductor:
+root-setup:unset" "$(cat "$log")"
+
+# A failed sourced environment hook is a hard boundary: partial PATH changes
+# do not permit setup or database work to continue.
+paths=$(make_bootstrap_app "failing-environment-hook")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+cd "$app_dir"
+cat > bin/workspace-environment-hook <<'SCRIPT'
+PATH="$WORKSPACE_TEST_TOOLCHAIN_BIN:$PATH"
+export PATH
+return 23
+SCRIPT
+cat > bin/workspace-setup-hook <<'SCRIPT'
+#!/bin/sh
+touch .workspace-setup-called
+SCRIPT
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+touch .rails-called
+SCRIPT
+chmod +x bin/workspace-setup-hook bin/rails
+
+assert_false "failing environment hook fails bootstrap" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  CONDUCTOR_WORKSPACE_NAME="failing-environment" \
+  WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
+  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_false "failed environment hook prevents setup" [ -e .workspace-setup-called ]
+assert_false "failed environment hook prevents Rails preparation" [ -e .rails-called ]
+
 # A failing dedicated hook is a hard lifecycle boundary. Nothing after it may
 # prepare databases, register the workspace, seed data, or report success.
 paths=$(make_bootstrap_app "failing-setup-hook")
