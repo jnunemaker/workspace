@@ -74,7 +74,7 @@ Run `bin/workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` 
 2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
 3. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
 4. Reserve the Git cleanup port when applicable, then source `bin/workspace-environment-hook` so project-selected PATH and toolchain state apply to every later project command.
-5. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
+5. Run the optional `bin/workspace-database-hook` with the path to the original checkout when Workspace has one, then patch an existing `config/database.yml` for isolation.
 6. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
 7. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
 8. Run the optional seed hook, atomically write `.workspace`, then run the optional bootstrap hook.
@@ -148,9 +148,10 @@ a provider display-name, directory, or branch rename.
 An identity hook prints the established workspace name without the leading
 underscore. It may print nothing to defer to provider/Git detection. Workspace
 exports `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and the detected
-`WORKSPACE_NAME` while invoking it. Once either marker exists, the hook is not
-called. A non-empty `.conductor-workspace` remains authoritative for the
-worktree until the project removes it.
+`WORKSPACE_NAME` while invoking it. For compatibility, an identity hook sees
+`WORKSPACE_ROOT_PATH` as empty when no root is available. Once either marker
+exists, the hook is not called. A non-empty `.conductor-workspace` remains
+authoritative for the worktree until the project removes it.
 
 ## Codex worktrees
 
@@ -203,7 +204,7 @@ Place any of these in your project's `bin/` directory to customize the workspace
 | ---- | ------------ | --- |
 | `bin/workspace-identity-hook` | Before lifecycle work when neither identity marker exists; print an established workspace name without the `_` prefix | Executed; empty output defers to provider/Git defaults |
 | `bin/workspace-environment-hook` | After identity, dotenv, and suffix resolution but before project-owned or runtime-dependent bootstrap, run, and archive work; also before ordinary setup in the root checkout | Sourced into the lifecycle shell; exported PATH and variables persist |
-| `bin/workspace-database-hook` | Before project setup, with `WORKSPACE_DB_SUFFIX` exported; use it to materialize `config/database.yml` locally | Executed |
+| `bin/workspace-database-hook` | When present, before project setup; can read `WORKSPACE_DB_SUFFIX` and, while the hook is running, a resolved `WORKSPACE_ROOT_PATH`; use the root path to copy database configuration when needed | Executed from the workspace checkout, not the original checkout |
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file written | Executed |
@@ -216,6 +217,14 @@ belongs only to managed sibling workspaces. Keep `bin/setup`, `bin/update`, and
 configuration must exist before the setup hook itself runs, materialize it in
 `bin/workspace-database-hook`. Existing projects without the dedicated setup
 hook retain the legacy setup fallback.
+
+`WORKSPACE_ROOT_PATH` is the path to the original checkout. A database hook can
+use it to copy a file such as `config/database.yml`, even though the hook runs
+from the workspace checkout. An identity hook always receives the variable for
+compatibility, with an empty value when no root is available. A database hook
+receives it only when the resolved path names an existing directory; otherwise
+the variable is unset. Later hooks and the app should not expect it. Workspace
+does not change the path before passing it to a hook.
 
 All hooks are optional. `workspace init` deliberately does not scaffold empty
 hooks; add and commit only the hooks the project actually needs.
@@ -260,6 +269,7 @@ To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_C
 - `WORKSPACE_HOME` — install location (default `~/.workspace`)
 - `WORKSPACE_PORT` — optional provider-neutral base-port override
 - `WORKSPACE_DB_SUFFIX` — exported during bootstrap/run as `_<workspace-name>`, used by the database.yml patch
+- `WORKSPACE_ROOT_PATH` — path to the original checkout; exported to the identity hook (empty when unavailable) and to the database hook only when it names an existing directory
 - `WORKSPACE_SKIP_CLAUDE_SKILL` — set to `1` to skip the Claude Code skill install
 - `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
 - `WORKSPACE_APP_URL` — set by `bin/workspace-run-hook` to override the URL displayed before Foreman starts

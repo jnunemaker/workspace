@@ -51,6 +51,8 @@ SCRIPT
 help_output=$(sh "$WORKSPACE_HOME/lib/bootstrap.sh" --help)
 assert_true "bootstrap help documents dedicated setup hook" output_has "$help_output" 'workspace setup hook'
 assert_true "bootstrap help documents legacy setup fallback" output_has "$help_output" 'legacy setup fallback'
+assert_true "bootstrap help documents the database suffix" output_has "$help_output" 'database hook can read WORKSPACE_DB_SUFFIX'
+assert_true "bootstrap help limits the root path to the database hook" output_has "$help_output" 'WORKSPACE_ROOT_PATH, but only while the hook runs'
 assert_true "bootstrap help says bin/update is never run" output_has "$help_output" 'never runs bin/update'
 
 # A project can materialize database.yml before its ordinary setup script. The
@@ -124,6 +126,7 @@ cat > bin/workspace-setup-hook <<'SCRIPT'
 #!/bin/sh
 [ -L .env ] || exit 1
 [ "${shared:-}" = "true" ] || exit 1
+[ "${WORKSPACE_ROOT_PATH+x}" != "x" ] || exit 1
 printf 'workspace-setup:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
 SCRIPT
 cat > bin/setup <<'SCRIPT'
@@ -206,13 +209,13 @@ chmod +x "$toolchain_bin/workspace-test-runtime" bin/workspace-setup-hook bin/ra
 
 assert_true "environment hook supplies managed bootstrap toolchain" env \
   PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
-  CONDUCTOR_WORKSPACE_NAME="environment-workspace" \
+  CONDUCTOR_WORKSPACE_NAME="environment-workspace" CONDUCTOR_PORT=51000 \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "environment hook receives resolved provider state" \
   "environment:conductor:$root_dir:environment-workspace" "$(sed -n '1p' "$log")"
 assert_equal "environment hook cannot replace provider lifecycle state" \
-  "setup:conductor:$root_dir:environment-workspace:_environment-workspace:$root_dir:environment-workspace:" \
+  "setup:conductor:$root_dir:environment-workspace:_environment-workspace:$root_dir:environment-workspace:51000" \
   "$(sed -n '2p' "$log")"
 assert_equal "environment toolchain reaches Rails preparation" \
   "rails:development:_environment-workspace:db:prepare
@@ -399,21 +402,86 @@ log="$TEST_TMP/identity-hook-bootstrap.log"
 hook_log="$TEST_TMP/identity-hook-calls.log"
 cd "$app_dir"
 install_suffix_logging_lifecycle
+cat > bin/setup <<'SCRIPT'
+#!/bin/sh
+printf 'setup:%s:%s\n' "$WORKSPACE_DB_SUFFIX" "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+cat > "$root_dir/config/database.yml" <<'YAML'
+development:
+  database: root_development
+test:
+  database: root_test
+YAML
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s:%s\n' "$WORKSPACE_DB_SUFFIX" "$WORKSPACE_ROOT_PATH" >> "$WORKSPACE_TEST_LOG"
+cp "$WORKSPACE_ROOT_PATH/config/database.yml" config/database.yml
+SCRIPT
 cat > bin/workspace-identity-hook <<'SCRIPT'
 #!/bin/sh
 printf 'called\n' >> "$WORKSPACE_IDENTITY_HOOK_LOG"
+printf 'identity:%s\n' "$WORKSPACE_ROOT_PATH" >> "$WORKSPACE_TEST_LOG"
 printf '%s' "stable-worktree-id"
 SCRIPT
-chmod +x bin/workspace-identity-hook
+chmod +x bin/workspace-database-hook bin/workspace-identity-hook
 
-WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "display-name" "$log"
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" \
+  assert_true "first identity-hook bootstrap succeeds" run_bootstrap "$root_dir" "display-name" "$log"
 assert_equal "identity hook pins first bootstrap" "stable-worktree-id" "$(cat .workspace)"
 assert_equal "identity hook called once" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
+assert_equal "identity hook receives root" "identity:$root_dir" "$(sed -n '1p' "$log")"
+assert_equal "first database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '2p' "$log")"
+assert_equal "first setup does not inherit root path" "setup:_stable-worktree-id:unset" "$(sed -n '3p' "$log")"
 
 : > "$log"
-WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" run_bootstrap "$root_dir" "renamed-display-name" "$log"
-assert_equal "repeated bootstrap keeps pinned suffix" "setup:_stable-worktree-id" "$(sed -n '1p' "$log")"
+WORKSPACE_IDENTITY_HOOK_LOG="$hook_log" \
+  assert_true "repeated identity-hook bootstrap succeeds" run_bootstrap "$root_dir" "renamed-display-name" "$log"
+assert_equal "repeated database hook receives root and pinned suffix" "database:_stable-worktree-id:$root_dir" "$(sed -n '1p' "$log")"
+assert_equal "repeated bootstrap keeps pinned suffix without root path" "setup:_stable-worktree-id:unset" "$(sed -n '2p' "$log")"
 assert_equal "pinned marker bypasses identity hook" "1" "$(wc -l < "$hook_log" | tr -d ' ')"
+
+# A provider may supply a workspace name without a root checkout. The identity
+# hook keeps its empty-value contract while the database hook sees no variable.
+paths=$(make_bootstrap_app "database-hook-without-root")
+app_dir=${paths%%|*}
+log="$TEST_TMP/database-hook-without-root.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+cat > bin/workspace-identity-hook <<'SCRIPT'
+#!/bin/sh
+printf 'identity:%s:%s\n' "${WORKSPACE_ROOT_PATH+x}" "${WORKSPACE_ROOT_PATH-}" >> "$WORKSPACE_TEST_LOG"
+printf '%s' "rootless-identity"
+SCRIPT
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x bin/workspace-identity-hook bin/workspace-database-hook
+
+WORKSPACE_ROOT_PATH="/stale/exported/root" \
+  CONDUCTOR_ROOT_PATH="" CONDUCTOR_WORKSPACE_NAME="rootless-provider" \
+  WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+rootless_bootstrap_status=$?
+assert_equal "rootless provider bootstrap succeeds" "0" "$rootless_bootstrap_status"
+assert_equal "identity hook retains its set-empty root contract" "identity:x:" "$(sed -n '1p' "$log")"
+assert_equal "database hook receives no empty root variable" "database:unset" "$(sed -n '2p' "$log")"
+
+# A provider-supplied path must name a directory before the database hook can
+# use it as an original checkout.
+paths=$(make_bootstrap_app "database-hook-with-stale-root")
+app_dir=${paths%%|*}
+log="$TEST_TMP/database-hook-with-stale-root.log"
+cd "$app_dir"
+install_suffix_logging_lifecycle
+cat > bin/workspace-database-hook <<'SCRIPT'
+#!/bin/sh
+printf 'database:%s\n' "${WORKSPACE_ROOT_PATH-unset}" >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x bin/workspace-database-hook
+
+assert_true "stale-root provider bootstrap succeeds" run_bootstrap \
+  "$TEST_TMP/missing-root" "stale-root-provider" "$log"
+assert_equal "database hook does not receive a stale root path" "database:unset" "$(sed -n '1p' "$log")"
 
 # Invalid stable identity fails before project setup or database preparation.
 paths=$(make_bootstrap_app "invalid-stable-identity")
