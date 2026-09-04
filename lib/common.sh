@@ -344,6 +344,7 @@ source_workspace_environment_hook() {
   local _environment_workspace_name _environment_workspace_git_common_dir
   local _environment_workspace_git_root_path _environment_workspace_invalid_name
   local _environment_workspace_identity_source _environment_workspace_db_suffix
+  local _environment_workspace_db_suffix_set
   local _environment_provider_exports
 
   [ -f bin/workspace-environment-hook ] || return 0
@@ -356,6 +357,7 @@ source_workspace_environment_hook() {
   _environment_workspace_invalid_name="${WORKSPACE_INVALID_NAME:-}"
   _environment_workspace_identity_source="${WORKSPACE_IDENTITY_SOURCE:-}"
   _environment_workspace_db_suffix="${WORKSPACE_DB_SUFFIX:-}"
+  _environment_workspace_db_suffix_set="${WORKSPACE_DB_SUFFIX+x}"
   _environment_provider_exports=$(export -p | grep -E \
     ' (WORKSPACE_PORT|SUPERCONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT)|SUPERSET_(ROOT_PATH|WORKSPACE_NAME|PORT)|CONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT))=' \
     || true)
@@ -370,8 +372,13 @@ source_workspace_environment_hook() {
   WORKSPACE_GIT_ROOT_PATH="$_environment_workspace_git_root_path"
   WORKSPACE_INVALID_NAME="$_environment_workspace_invalid_name"
   WORKSPACE_IDENTITY_SOURCE="$_environment_workspace_identity_source"
-  WORKSPACE_DB_SUFFIX="$_environment_workspace_db_suffix"
-  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME WORKSPACE_DB_SUFFIX
+  export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
+  if [ -n "$_environment_workspace_db_suffix_set" ]; then
+    WORKSPACE_DB_SUFFIX="$_environment_workspace_db_suffix"
+    export WORKSPACE_DB_SUFFIX
+  else
+    unset WORKSPACE_DB_SUFFIX
+  fi
 
   unset WORKSPACE_PORT
   unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_PORT

@@ -37,7 +37,7 @@ Strong signals you're in workspace territory: a `.workspace` file in the repo, a
 
 ## Lifecycle hooks
 
-The project customizes the lifecycle with scripts in its own `bin/` directory. Executed hooks need executable mode; sourced hooks only need to be readable. **When debugging unexpected workspace behavior, check these first** — they hold the project-specific magic the CLI doesn't know about.
+The project customizes the lifecycle with scripts in its own `bin/` directory. Every hook except `bin/workspace-environment-hook` requires executable mode; the environment hook is sourced as a regular readable file. **When debugging unexpected workspace behavior, check these first** — they hold the project-specific magic the CLI doesn't know about.
 
 | Hook | When it runs | How |
 | --- | --- | --- |
@@ -47,16 +47,17 @@ The project customizes the lifecycle with scripts in its own `bin/` directory. E
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX`, before Workspace prepares dev/test databases; prevents the legacy setup fallback in managed siblings | Executed |
 | `bin/workspace-seed` | After `db:prepare` during bootstrap | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file write | Executed |
-| `bin/workspace-run-hook` | Before foreman starts (after dotenv, ports, and `WORKSPACE_DB_SUFFIX`) | **Sourced** — can export server variables and set `WORKSPACE_APP_URL` for display |
+| `bin/workspace-run-hook` | Before foreman starts (after dotenv, ports, and `WORKSPACE_DB_SUFFIX`) | **Sourced when executable** — can export server variables and set `WORKSPACE_APP_URL` for display |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
 
 Every hook is optional, and `workspace init` does not create empty hook files.
-The environment and run hooks are sourced; all others are executed and require
-`chmod +x`. Keep sourced hooks POSIX `/bin/sh` compatible and export changes
-that subprocesses need. Use the environment hook for project-owned activation
-of mise, asdf, rbenv, Nix, direnv, or another manager; Workspace does not assume
-or require a specific runtime manager. A nonzero hook result stops the current
-lifecycle.
+The environment hook is sourced without requiring executable mode. The run hook
+is also sourced, but executable mode remains its opt-in; all other hooks are
+executed and require `chmod +x`. Keep sourced hooks POSIX `/bin/sh` compatible
+and export changes that subprocesses need. Use the environment hook for
+project-owned activation of mise, asdf, rbenv, Nix, direnv, or another manager;
+Workspace does not assume or require a specific runtime manager. A nonzero hook
+result stops the current lifecycle.
 
 ## Key concepts
 

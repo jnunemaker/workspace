@@ -197,7 +197,7 @@ native cleanup could not complete.
 
 ## Hooks
 
-Place any of these in your project's `bin/` directory to customize the workspace lifecycle. Executed hooks must be executable (`chmod +x`); sourced hooks only need to be readable.
+Place any of these in your project's `bin/` directory to customize the workspace lifecycle. All hooks except `bin/workspace-environment-hook` must be executable (`chmod +x`). The environment hook is sourced whenever it is a regular file and only needs to be readable.
 
 | Hook | When it runs | How |
 | ---- | ------------ | --- |
@@ -207,7 +207,7 @@ Place any of these in your project's `bin/` directory to customize the workspace
 | `bin/workspace-setup-hook` | After shared files and `WORKSPACE_DB_SUFFIX` are available, before Workspace prepares development/test databases; replaces ordinary setup fallback for managed siblings | Executed |
 | `bin/workspace-seed` | After workspace databases are prepared (during bootstrap) | Executed |
 | `bin/workspace-bootstrap-hook` | After DB preparation, seeding, and `.workspace` file written | Executed |
-| `bin/workspace-run-hook` | Before foreman starts, after dotenv, ports, and `WORKSPACE_DB_SUFFIX` are exported | Sourced (can set env vars and `WORKSPACE_APP_URL` for the server) |
+| `bin/workspace-run-hook` | Before foreman starts, after dotenv, ports, and `WORKSPACE_DB_SUFFIX` are exported | Sourced when executable (can set env vars and `WORKSPACE_APP_URL` for the server) |
 | `bin/workspace-archive-hook` | Before ports are swept and DBs dropped | Executed with `WORKSPACE_DB_SUFFIX` set |
 
 Use `bin/workspace-setup-hook` for dependency installation or other setup that

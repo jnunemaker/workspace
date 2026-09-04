@@ -235,7 +235,11 @@ export WORKSPACE_DB_SUFFIX
 SCRIPT
 cat > bin/setup <<'SCRIPT'
 #!/usr/bin/env workspace-test-runtime
-printf 'root-setup:%s\n' "${WORKSPACE_DB_SUFFIX:-unset}" >> "$WORKSPACE_TEST_LOG"
+if env | grep -q '^WORKSPACE_DB_SUFFIX='; then
+  printf 'root-setup:set:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_LOG"
+else
+  printf 'root-setup:unset\n' >> "$WORKSPACE_TEST_LOG"
+fi
 SCRIPT
 chmod +x bin/setup
 
