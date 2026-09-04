@@ -111,6 +111,21 @@ assert_false "failed Git bootstrap does not write a stable marker" [ -e .workspa
 unregister_workspace
 rm -f "$collision_bootstrap_log"
 
+# Git cleanup registration is the hard boundary before any project environment
+# code. A failing sourced hook may have created resources, so prune must already
+# have the authoritative record needed to recover them.
+cat > "$conflicting_worktree/bin/workspace-environment-hook" <<'EOF'
+printf 'environment\n' >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+return 43
+EOF
+assert_false "failing Git environment hook reports bootstrap failure" env WORKSPACE_PORT=51410 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_true "failing environment hook runs after cleanup registration" [ -f "$conflicting_registry_entry" ]
+assert_equal "failed environment hook retains its reserved cleanup port" "51410" "$(sed -n '4p' "$conflicting_registry_entry")"
+assert_equal "failing environment hook runs before project setup" "environment" "$(cat "$collision_bootstrap_log")"
+assert_false "failed environment hook does not write a stable marker" [ -e .workspace ]
+unregister_workspace
+rm -f "$collision_bootstrap_log" bin/workspace-environment-hook
+
 publication_bin="$TEST_TMP/publication-bin"
 publication_sweep_log="$TEST_TMP/publication-sweep.log"
 publication_run_log="$TEST_TMP/publication-run.log"
@@ -241,13 +256,38 @@ EOF
 chmod +x "$run_fake_bin/lsof"
 cat > "$git_worktree/bin/foreman" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$PORT" > "$WORKSPACE_TEST_RUN_LOG"
+{
+  printf 'BASE_PORT=%s\n' "$BASE_PORT"
+  printf 'PORT=%s\n' "$PORT"
+  printf 'HTTPS_PORT=%s\n' "$HTTPS_PORT"
+  printf 'RAILS_PORT=%s\n' "$RAILS_PORT"
+  printf 'CADDY_ADMIN_PORT=%s\n' "$CADDY_ADMIN_PORT"
+  printf 'VITE_RUBY_PORT=%s\n' "$VITE_RUBY_PORT"
+} > "$WORKSPACE_TEST_RUN_LOG"
+EOF
+cat > "$git_worktree/bin/workspace-environment-hook" <<'EOF'
+BASE_PORT=3000
+PORT=3000
+HTTPS_PORT=3000
+RAILS_PORT=3001
+CADDY_ADMIN_PORT=3002
+VITE_RUBY_PORT=3003
+export BASE_PORT PORT HTTPS_PORT RAILS_PORT CADDY_ADMIN_PORT VITE_RUBY_PORT
+EOF
+cat > "$git_worktree/Procfile.dev" <<'EOF'
+caddy: caddy run
+vite: bin/vite dev
 EOF
 chmod +x "$git_worktree/bin/foreman"
 cd "$git_worktree"
 PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" CONDUCTOR_PORT=51230 WORKSPACE_TEST_RUN_LOG="$run_log" sh "$WORKSPACE_HOME/lib/run.sh"
 assert_true "run registers an unbootstrapped Git worktree" [ -f "$registry_entry" ]
-assert_equal "run uses its registered port" "$(sed -n '4p' "$registry_entry")" "$(cat "$run_log")"
+assert_equal "run recomputes authoritative ports after the environment hook" "BASE_PORT=51230
+PORT=51230
+HTTPS_PORT=51230
+RAILS_PORT=51231
+CADDY_ADMIN_PORT=51232
+VITE_RUBY_PORT=51233" "$(cat "$run_log")"
 
 # Manual Git archive keeps the record when Rails reports a database failure,
 # allowing prune or a later archive to retry.

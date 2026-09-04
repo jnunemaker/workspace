@@ -4,10 +4,9 @@
 # Flow:
 #   1. Resolve workspace name and root path
 #   2. Load linked .env defaults without overriding provider environment
-#   3. Resolve ports from WORKSPACE_PORT, Git registration, provider input,
-#      or the deterministic/default fallback
-#   4. Export port and DB env vars
-#   5. Source bin/workspace-environment-hook if it exists
+#   3. Reserve a Git port block and export the DB suffix
+#   4. Source bin/workspace-environment-hook if it exists
+#   5. Detect app services, resolve authoritative ports, and export them
 #   6. Sweep ports (kill stale processes)
 #   7. Source bin/workspace-run-hook if it exists
 #   8. Display the hook-provided application URL or the generic fallback
@@ -34,8 +33,6 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 resolve_workspace
 sanitize_workspace_name
 resolve_workspace_identity
-detect_caddy
-detect_vite
 
 # Foreman's env-file values override its parent environment. Load the linked
 # dotenv here instead, restoring values already exported by the manager. This
@@ -64,6 +61,22 @@ if [ "$WORKSPACE_PROVIDER" = "git" ]; then
   }
 fi
 
+# ── DB env vars and project toolchain ────────────────────────────
+
+if ! is_default_workspace; then
+  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
+else
+  unset WORKSPACE_DB_SUFFIX
+fi
+
+# The environment hook prepares PATH/toolchain state. Workspace computes all
+# authoritative service and port state afterward so the hook cannot make the
+# reservation, sweep, and Foreman environment disagree.
+source_workspace_environment_hook
+detect_caddy
+detect_vite
+detect_foreman
+
 # ── Port derivation ──────────────────────────────────────────────
 
 # Priority and legacy defaults are centralized in common.sh.
@@ -87,19 +100,6 @@ if [ "$USES_VITE" = "true" ]; then
     export VITE_RUBY_PORT=$((BASE_PORT + 1))
   fi
 fi
-
-# ── DB env vars ──────────────────────────────────────────────────
-
-if ! is_default_workspace; then
-  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
-else
-  unset WORKSPACE_DB_SUFFIX
-fi
-
-# Activate the project toolchain before resolving or starting Foreman. The
-# separate run hook remains later in the lifecycle for server-specific values.
-source_workspace_environment_hook
-detect_foreman
 
 # ── Sweep ports ──────────────────────────────────────────────────
 

@@ -200,11 +200,6 @@ load_dotenv_defaults ./.env
 
 export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
-# Project runtime activation must happen before any project-owned hook or
-# runtime-dependent command. Because this file is sourced, PATH and other
-# exports remain active through setup, Rails preparation, and later hooks.
-source_workspace_environment_hook
-
 # Validate and publish the port reservation before project hooks or database
 # work. If bootstrap later fails, the record lets prune clean up any resources
 # already created after an external manager removes the worktree.
@@ -219,6 +214,11 @@ if [ "$WORKSPACE_PROVIDER" = "git" ]; then
     exit 1
   }
 fi
+
+# Project runtime activation happens only after Git cleanup registration, but
+# before any project-owned setup or runtime-dependent command. Because this file
+# is sourced, PATH and other exports remain active through later hooks and Rails.
+source_workspace_environment_hook
 
 # ── Materialize and patch DB config before project setup ─────────
 

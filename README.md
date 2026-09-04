@@ -73,7 +73,7 @@ Run `bin/workspace bootstrap` inside a sibling checkout (e.g. `myapp-feature-x` 
 1. Resolve one stable database identity from existing markers, a project hook, provider variables, or Git worktree metadata.
 2. Link untracked shared files and directories from the root checkout. Tracked files such as `.tool-versions`, and shared directories containing tracked descendants, remain owned by the sibling branch and are never replaced with root symlinks.
 3. Load the shared environment and export `WORKSPACE_DB_SUFFIX`.
-4. Source `bin/workspace-environment-hook` when present so project-selected PATH and toolchain state apply to every later project command.
+4. Reserve the Git cleanup port when applicable, then source `bin/workspace-environment-hook` so project-selected PATH and toolchain state apply to every later project command.
 5. Run `bin/workspace-database-hook` when present, then patch an existing `config/database.yml` for isolation.
 6. Run `bin/workspace-setup-hook` when present. If it is absent, fall back to `bin/setup`, `script/setup`, or `script/bootstrap` for compatibility, then patch again in case that fallback generated `database.yml`.
 7. Prepare the workspace-specific databases with Rails `db:prepare`. On older Rails applications that do not define that task, safely fall back to `db:create` followed by `db:migrate`.
