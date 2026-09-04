@@ -111,6 +111,24 @@ assert_false "failed Git bootstrap does not write a stable marker" [ -e .workspa
 unregister_workspace
 rm -f "$collision_bootstrap_log"
 
+# Git cleanup registration is the hard boundary before any project environment
+# code. A failing sourced hook may have created resources, so prune must already
+# have the authoritative record needed to recover them.
+cat > "$conflicting_worktree/bin/workspace-environment-hook" <<'EOF'
+printf 'environment\n' >> "$WORKSPACE_TEST_BOOTSTRAP_LOG"
+WORKSPACE_GIT_COMMON_DIR=/wrong/hook/git-common-dir
+set +e
+return 43
+EOF
+assert_false "failing Git environment hook reports bootstrap failure" env WORKSPACE_PORT=51410 WORKSPACE_TEST_BOOTSTRAP_LOG="$collision_bootstrap_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_true "failing environment hook runs after cleanup registration" [ -f "$conflicting_registry_entry" ]
+assert_equal "failed environment hook retains its reserved cleanup port" "51410" "$(sed -n '4p' "$conflicting_registry_entry")"
+assert_equal "failing environment hook runs before project setup" "environment" "$(cat "$collision_bootstrap_log")"
+assert_false "failed environment hook does not write a stable marker" [ -e .workspace ]
+assert_false "failed environment hook restores state before releasing registry lock" [ -e "$git_root/.git/workspace/prune.lock" ]
+unregister_workspace
+rm -f "$collision_bootstrap_log" bin/workspace-environment-hook
+
 publication_bin="$TEST_TMP/publication-bin"
 publication_sweep_log="$TEST_TMP/publication-sweep.log"
 publication_run_log="$TEST_TMP/publication-run.log"
@@ -241,13 +259,38 @@ EOF
 chmod +x "$run_fake_bin/lsof"
 cat > "$git_worktree/bin/foreman" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$PORT" > "$WORKSPACE_TEST_RUN_LOG"
+{
+  printf 'BASE_PORT=%s\n' "$BASE_PORT"
+  printf 'PORT=%s\n' "$PORT"
+  printf 'HTTPS_PORT=%s\n' "$HTTPS_PORT"
+  printf 'RAILS_PORT=%s\n' "$RAILS_PORT"
+  printf 'CADDY_ADMIN_PORT=%s\n' "$CADDY_ADMIN_PORT"
+  printf 'VITE_RUBY_PORT=%s\n' "$VITE_RUBY_PORT"
+} > "$WORKSPACE_TEST_RUN_LOG"
+EOF
+cat > "$git_worktree/bin/workspace-environment-hook" <<'EOF'
+BASE_PORT=3000
+PORT=3000
+HTTPS_PORT=3000
+RAILS_PORT=3001
+CADDY_ADMIN_PORT=3002
+VITE_RUBY_PORT=3003
+export BASE_PORT PORT HTTPS_PORT RAILS_PORT CADDY_ADMIN_PORT VITE_RUBY_PORT
+EOF
+cat > "$git_worktree/Procfile.dev" <<'EOF'
+caddy: caddy run
+vite: bin/vite dev
 EOF
 chmod +x "$git_worktree/bin/foreman"
 cd "$git_worktree"
 PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" CONDUCTOR_PORT=51230 WORKSPACE_TEST_RUN_LOG="$run_log" sh "$WORKSPACE_HOME/lib/run.sh"
 assert_true "run registers an unbootstrapped Git worktree" [ -f "$registry_entry" ]
-assert_equal "run uses its registered port" "$(sed -n '4p' "$registry_entry")" "$(cat "$run_log")"
+assert_equal "run recomputes authoritative ports after the environment hook" "BASE_PORT=51230
+PORT=51230
+HTTPS_PORT=51230
+RAILS_PORT=51231
+CADDY_ADMIN_PORT=51232
+VITE_RUBY_PORT=51233" "$(cat "$run_log")"
 
 # Manual Git archive keeps the record when Rails reports a database failure,
 # allowing prune or a later archive to retry.
@@ -429,6 +472,12 @@ cat > bin/workspace-archive-hook <<'EOF'
 #!/bin/sh
 printf '%s:%s\n' "$(pwd -P)" "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_ARCHIVE_HOOK_LOG"
 EOF
+cat > bin/workspace-environment-hook <<'EOF'
+if [ -n "${WORKSPACE_TEST_REPLACE_REGISTERED_PORT:-}" ]; then
+  WORKSPACE_REGISTERED_PORT="$WORKSPACE_TEST_REPLACE_REGISTERED_PORT"
+  export WORKSPACE_REGISTERED_PORT
+fi
+EOF
 chmod +x bin/workspace-archive-hook
 
 invalid_port_entry="$git_root/.git/workspace/registry/invalid-port.record"
@@ -459,17 +508,20 @@ WORKSPACE_TEST_REAL_GIT=$(command -v git) PATH="$fake_git_bin:$PATH" sh "$WORKSP
 assert_true "Git query failure preserves registry" [ -f "$registry_entry" ]
 
 ln -s "99999999" "$git_root/.git/workspace/prune.lock"
-PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_DB_DROP_FAIL=1 WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"
+PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_DB_DROP_FAIL=1 WORKSPACE_TEST_PRUNE_LOG="$prune_log" WORKSPACE_TEST_REPLACE_REGISTERED_PORT=53000 sh "$WORKSPACE_HOME/lib/prune.sh"
 
 assert_true "failed database cleanup preserves registry" [ -f "$registry_entry" ]
 assert_false "stale prune lock recovered" [ -L "$git_root/.git/workspace/prune.lock" ]
 
-PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh"
+PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" WORKSPACE_TEST_REPLACE_REGISTERED_PORT=53000 sh "$WORKSPACE_HOME/lib/prune.sh"
 
 assert_false "stale registry entry removed" [ -f "$registry_entry" ]
 assert_true "prune drops development database" grep -q "development:_${registered_name}:db:drop" "$prune_log"
 assert_true "prune drops test database" grep -q "test:_${registered_name}:db:drop" "$prune_log"
 assert_true "port sweep uses isolated lsof stub" [ "$(wc -l < "$lsof_log" | tr -d ' ')" -eq 20 ]
+assert_equal "stale prune keeps the claimed registry port despite environment hook replacement" "2" "$(grep -c -- '-ti :51230' "$lsof_log")"
+assert_equal "stale prune sweeps the end of the claimed registry block" "2" "$(grep -c -- '-ti :51239' "$lsof_log")"
+assert_false "stale prune never sweeps the hook-supplied port" grep -q -- '-ti :53000' "$lsof_log"
 assert_true "archive hook runs from surviving root" grep -q "^${git_root}:_${registered_name}$" "$archive_hook_log"
 
 # Registration is intentionally limited to generic Git worktrees; existing
