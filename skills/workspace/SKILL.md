@@ -149,6 +149,14 @@ cd .. && rm -rf myapp-feature-x
 - Generic Git worktrees are registered so cleanup can recover after an external tool deletes their directories or native Codex cleanup is interrupted. Run `bin/workspace prune` from a surviving checkout to reconcile immediately; the SessionEnd deferred prune and normal bootstrap/run reconciliation are fallback paths. Archive cleans only its current workspace.
 - Port precedence is `WORKSPACE_PORT`, an existing Git registry reservation, `SUPERCONDUCTOR_PORT`, `SUPERSET_PORT`, `CONDUCTOR_PORT`, then deterministic or default allocation. Port inputs must be decimal base ports from `1` through `65526` so the complete 10-port block stays within `1-65535`; leading zeroes are normalized. Invalid values fail before starting processes, and an explicit `WORKSPACE_PORT` already overlapping another Git worktree's block fails instead of silently moving or sharing it. `bin/workspace info` reports the resolved block.
 
+`run` and `archive` verify port release after sending TERM, within a five-second
+inspection/wait budget. They do not force-kill or chase replacement processes.
+On failure, run stops before startup; archive stops before database cleanup and
+keeps any cleanup registration. Inspect the reported processes in their owning
+app or terminal before retrying. TCP clients are excluded; local UDP sockets are
+included. Port occupancy is not proof of checkout ownership, and OS permissions
+can limit inspection. This does not prevent orphaning or supervise Foreman.
+
 ## Project application URL
 
 For a project hostname shared by `info` and `run` using Workspace's resolved port, set
