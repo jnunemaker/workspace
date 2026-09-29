@@ -30,7 +30,7 @@ if [ "$_prune_mode" = "--after-delay" ]; then
   _prune_mode=""
 fi
 
-resolve_workspace
+resolve_workspace || exit 1
 
 _registry_root=$(workspace_registry_root 2>/dev/null || true)
 [ -n "$_registry_root" ] && [ -d "$_registry_root" ] || exit 0

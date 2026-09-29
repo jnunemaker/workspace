@@ -283,7 +283,7 @@ vite: bin/vite dev
 EOF
 chmod +x "$git_worktree/bin/foreman"
 cd "$git_worktree"
-PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" CONDUCTOR_PORT=51230 WORKSPACE_TEST_RUN_LOG="$run_log" sh "$WORKSPACE_HOME/lib/run.sh"
+PATH="$run_fake_bin:$PATH" CODEX_HOME="$CODEX_HOME" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_PORT=51230 WORKSPACE_TEST_RUN_LOG="$run_log" sh "$WORKSPACE_HOME/lib/run.sh"
 assert_true "run registers an unbootstrapped Git worktree" [ -f "$registry_entry" ]
 assert_equal "run recomputes authoritative ports after the environment hook" "BASE_PORT=51230
 PORT=51230
@@ -526,6 +526,7 @@ assert_true "archive hook runs from surviving root" grep -q "^${git_root}:_${reg
 
 # Registration is intentionally limited to generic Git worktrees; existing
 # providers continue to own their lifecycle state.
+SUPERSET_WORKSPACE_PATH=$(git rev-parse --show-toplevel)
 SUPERSET_ROOT_PATH="/superset/root"
 SUPERSET_WORKSPACE_NAME="superset-ws"
 resolve_workspace

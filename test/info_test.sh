@@ -12,6 +12,7 @@ help_output=$(WORKSPACE_HOME="$WORKSPACE_HOME" "$WORKSPACE_HOME/bin/workspace" -
 assert_true "CLI help lists info command" output_has "$help_output" '^  info '
 
 app_dir=$(create_fake_app "info-conductor")
+git -C "$app_dir" init -q
 root_dir=$(create_fake_root "info-conductor")
 cd "$app_dir"
 cat > Procfile.dev <<'EOF'
@@ -19,7 +20,7 @@ caddy: caddy run
 vite: bin/vite dev
 EOF
 
-output=$(CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT=4100 sh "$WORKSPACE_HOME/lib/info.sh")
+output=$(CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT=4100 sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "info reports Conductor provider" output_has "$output" '^Provider: conductor$'
 assert_true "info reports workspace name" output_has "$output" '^Workspace: feature-info$'
 assert_true "info reports provider-derived identity source" output_has "$output" '^Identity source: derived$'
@@ -33,7 +34,7 @@ assert_true "info reports Vite port" output_has "$output" '^  Vite: 4103$'
 
 printf '%s' "existing-database" > .conductor-workspace
 printf '%s' "wrong-workspace" > .workspace
-output=$(SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="renamed-provider" SUPERSET_PORT=4150 sh "$WORKSPACE_HOME/lib/info.sh")
+output=$(SUPERSET_WORKSPACE_PATH="$(pwd -P)" SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="renamed-provider" SUPERSET_PORT=4150 sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "info trusts existing Conductor marker" output_has "$output" '^Workspace: existing-database$'
 assert_true "info reports Conductor marker source" output_has "$output" '^Identity source: .conductor-workspace$'
 assert_true "info uses resolved database suffix" output_has "$output" '^Database suffix: _existing-database$'
@@ -52,10 +53,11 @@ output=$(sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "info loads application URL from dotenv like run" output_has "$output" '^URL: https://dotenv.example.test$'
 
 app_dir=$(create_fake_app "info-invalid-name")
+git -C "$app_dir" init -q
 root_dir=$(create_fake_root "info-invalid-name")
 cd "$app_dir"
 invalid_output="$TEST_TMP/info-invalid-name.out"
-if SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="!!!" sh "$WORKSPACE_HOME/lib/info.sh" >"$invalid_output" 2>&1; then
+if SUPERSET_WORKSPACE_PATH="$(pwd -P)" SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="!!!" sh "$WORKSPACE_HOME/lib/info.sh" >"$invalid_output" 2>&1; then
   invalid_status=0
 else
   invalid_status=$?
@@ -64,10 +66,11 @@ assert_equal "info rejects a workspace name that sanitizes to empty" "1" "$inval
 assert_true "invalid workspace name explains suffix safety" grep -q 'Workspace name cannot produce a safe isolated database suffix' "$invalid_output"
 
 app_dir=$(create_fake_app "info-invalid-port")
+git -C "$app_dir" init -q
 root_dir=$(create_fake_root "info-invalid-port")
 cd "$app_dir"
 invalid_output="$TEST_TMP/info-invalid-port.out"
-if CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT="not-a-port" sh "$WORKSPACE_HOME/lib/info.sh" >"$invalid_output" 2>&1; then
+if CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT="not-a-port" sh "$WORKSPACE_HOME/lib/info.sh" >"$invalid_output" 2>&1; then
   invalid_status=0
 else
   invalid_status=$?
@@ -76,13 +79,14 @@ assert_equal "info rejects a nonnumeric provider port" "1" "$invalid_status"
 assert_true "invalid provider port identifies the value" grep -q "Port must be a number, got 'not-a-port'" "$invalid_output"
 
 app_dir=$(create_fake_app "info-vite")
+git -C "$app_dir" init -q
 root_dir=$(create_fake_root "info-vite")
 cd "$app_dir"
 cat > Procfile.dev <<'EOF'
 vite: bin/vite dev
 web: bin/rails server
 EOF
-output=$(CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-vite" CONDUCTOR_PORT=4200 sh "$WORKSPACE_HOME/lib/info.sh")
+output=$(CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-vite" CONDUCTOR_PORT=4200 sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "non-Caddy Vite info reports HTTP app URL" output_has "$output" '^URL: http://localhost:4200$'
 assert_true "non-Caddy Vite info reports app port" output_has "$output" '^  App: 4200$'
 assert_true "non-Caddy Vite info assigns the next port to Vite" output_has "$output" '^  Vite: 4201$'

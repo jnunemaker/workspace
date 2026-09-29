@@ -15,6 +15,9 @@ assert_false "empty Git path is not canonicalized to cwd" canonical_git_path ""
 # ── resolve_workspace ────────────────────────────────────────────
 
 # Prefers SUPERCONDUCTOR vars over SUPERSET and CONDUCTOR vars
+SUPERCONDUCTOR_WORKSPACE_PATH=$(git rev-parse --show-toplevel)
+SUPERSET_WORKSPACE_PATH="$SUPERCONDUCTOR_WORKSPACE_PATH"
+CONDUCTOR_WORKSPACE_PATH="$SUPERCONDUCTOR_WORKSPACE_PATH"
 SUPERCONDUCTOR_ROOT_PATH="/superconductor/root"
 SUPERCONDUCTOR_WORKSPACE_NAME="superconductor-ws"
 SUPERSET_ROOT_PATH="/superset/root"
@@ -117,6 +120,7 @@ assert_equal "manual git worktree uses generic provider" "git" "$WORKSPACE_PROVI
 
 # Existing provider variables retain priority even inside a Git worktree.
 cd "$git_worktree"
+SUPERSET_WORKSPACE_PATH="$git_worktree"
 SUPERSET_ROOT_PATH="/superset/root"
 SUPERSET_WORKSPACE_NAME="superset-ws"
 resolve_workspace
@@ -143,6 +147,7 @@ assert_false "named workspace is not default" is_default_workspace
 unset SUPERCONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
 
 # Clean name passes through unchanged
+WORKSPACE_PROVIDER="superset"
 SUPERSET_WORKSPACE_NAME="my-feature"
 sanitize_workspace_name
 assert_equal "clean name unchanged" "my-feature" "$WORKSPACE_NAME"
@@ -173,6 +178,7 @@ sanitize_workspace_name
 assert_equal "exact 45-character Superset identity is preserved" "$SUPERSET_WORKSPACE_NAME" "$WORKSPACE_NAME"
 
 # Superconductor and generic Git worktrees keep Workspace's 40-character limit.
+WORKSPACE_PROVIDER="superconductor"
 SUPERCONDUCTOR_WORKSPACE_NAME="1234567890123456789012345678901234567890123456"
 sanitize_workspace_name
 length=$(printf '%s' "$WORKSPACE_NAME" | wc -c | tr -d ' ')
@@ -188,6 +194,7 @@ assert_true "no trailing hyphen after truncate" [ "$last_char" != "-" ]
 unset SUPERCONDUCTOR_WORKSPACE_NAME
 
 # "default" skips sanitization
+WORKSPACE_PROVIDER="superset"
 SUPERSET_WORKSPACE_NAME="default"
 WORKSPACE_NAME="default"
 sanitize_workspace_name
@@ -196,6 +203,7 @@ assert_equal "default skips sanitization" "default" "$WORKSPACE_NAME"
 # Only sanitizes SUPERSET/SUPERCONDUCTOR names, not CONDUCTOR names
 unset SUPERCONDUCTOR_WORKSPACE_NAME SUPERSET_WORKSPACE_NAME
 CONDUCTOR_WORKSPACE_NAME="feat/weird-name"
+CONDUCTOR_WORKSPACE_PATH=$(git rev-parse --show-toplevel)
 resolve_workspace
 sanitize_workspace_name
 assert_equal "conductor names not sanitized" "feat/weird-name" "$WORKSPACE_NAME"

@@ -5,17 +5,17 @@ cd "$(dirname "$0")"
 . ./test_helper.sh
 
 run_bootstrap() {
-  CONDUCTOR_ROOT_PATH="$1" CONDUCTOR_WORKSPACE_NAME="$2" \
+  CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$1" CONDUCTOR_WORKSPACE_NAME="$2" \
     WORKSPACE_TEST_LOG="$3" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 }
 
 run_superconductor_bootstrap() {
-  SUPERCONDUCTOR_ROOT_PATH="$1" SUPERCONDUCTOR_WORKSPACE_NAME="$2" \
+  SUPERCONDUCTOR_WORKSPACE_PATH="$(pwd -P)" SUPERCONDUCTOR_ROOT_PATH="$1" SUPERCONDUCTOR_WORKSPACE_NAME="$2" \
     WORKSPACE_TEST_LOG="$3" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 }
 
 run_superset_bootstrap() {
-  SUPERSET_ROOT_PATH="$1" SUPERSET_WORKSPACE_NAME="$2" \
+  SUPERSET_WORKSPACE_PATH="$(pwd -P)" SUPERSET_ROOT_PATH="$1" SUPERSET_WORKSPACE_NAME="$2" \
     WORKSPACE_TEST_LOG="$3" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 }
 
@@ -25,6 +25,7 @@ output_has() {
 
 make_bootstrap_app() {
   app_dir=$(create_fake_app "$1")
+  git -C "$app_dir" init -q
   root_dir=$(create_fake_root "$1")
   mkdir -p "$app_dir/config"
   printf '%s\n' "$app_dir|$root_dir"
@@ -207,7 +208,7 @@ SCRIPT
 chmod +x "$toolchain_bin/workspace-test-runtime" bin/workspace-setup-hook bin/rails
 
 assert_true "environment hook supplies managed bootstrap toolchain" env \
-  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  PATH="/usr/bin:/bin" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="environment-workspace" \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
@@ -252,7 +253,7 @@ SCRIPT
 chmod +x bin/setup
 
 assert_true "environment hook supplies root bootstrap toolchain" env \
-  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  PATH="/usr/bin:/bin" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="default" \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" WORKSPACE_TEST_LOG="$log" \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
@@ -283,7 +284,7 @@ SCRIPT
 chmod +x bin/workspace-setup-hook bin/rails
 
 assert_false "failing environment hook fails bootstrap" env \
-  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  PATH="/usr/bin:/bin" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="failing-environment" \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
   /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
@@ -323,7 +324,7 @@ touch .bootstrap-hook-called
 SCRIPT
 chmod +x bin/workspace-setup-hook bin/rails bin/workspace-seed bin/workspace-bootstrap-hook
 
-assert_false "failing workspace setup hook fails bootstrap" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="failing-hook" WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_false "failing workspace setup hook fails bootstrap" env CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="failing-hook" WORKSPACE_TEST_LOG="$log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
 assert_equal "failing setup hook runs with isolated suffix" "workspace-setup:_failing-hook" "$(cat "$log")"
 assert_false "failed setup hook prevents database preparation" [ -f .rails-called ]
 assert_false "failed setup hook prevents workspace registration" [ -f .workspace ]
@@ -547,7 +548,7 @@ exit 1
 SCRIPT
 chmod +x bin/rails
 
-assert_false "bootstrap reports db:prepare failure" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="prepare-failure" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_false "bootstrap reports db:prepare failure" env CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="prepare-failure" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
 assert_false "failed bootstrap does not report database ready" grep -q 'database ready' "$output"
 assert_false "failed bootstrap does not report setup complete" grep -q 'Setup complete' "$output"
 
@@ -631,7 +632,7 @@ exit 0
 SCRIPT
 chmod +x bin/rails
 
-assert_true "bootstrap preserves tracked shared directories" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-directories" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_true "bootstrap preserves tracked shared directories" env CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-directories" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
 assert_false "tracked storage directory is not a symlink" [ -L storage ]
 assert_false "tracked bundle directory is not a symlink" [ -L .bundle ]
 assert_equal "tracked storage keeps local modification" "workspace storage modified" "$(cat storage/.keep)"
@@ -659,7 +660,7 @@ exit 0
 SCRIPT
 chmod +x bin/rails
 
-assert_true "bootstrap preserves tracked shared path types" env CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-path-types" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
+assert_true "bootstrap preserves tracked shared path types" env CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="tracked-path-types" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$output" 2>&1
 assert_equal "tracked storage symlink keeps its branch target" "linked-storage" "$(readlink storage)"
 assert_false "tracked bundle regular file is not replaced" [ -L .bundle ]
 assert_equal "tracked bundle regular file keeps branch contents" "workspace bundle file" "$(cat .bundle)"
@@ -697,7 +698,7 @@ cat > bin/setup <<'SCRIPT'
 touch .setup-called
 SCRIPT
 chmod +x bin/setup
-assert_false "empty sanitized workspace identity is rejected" env SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="///" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_false "empty sanitized workspace identity is rejected" env SUPERSET_WORKSPACE_PATH="$(pwd -P)" SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="///" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_false "invalid identity is rejected before setup" [ -f .setup-called ]
 
 report "bootstrap lifecycle"

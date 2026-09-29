@@ -16,7 +16,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   exit 0
 fi
 
-resolve_workspace
+resolve_workspace || exit 1
 sanitize_workspace_name
 resolve_workspace_identity
 detect_caddy

@@ -30,7 +30,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
   exit 0
 }
 
-resolve_workspace
+resolve_workspace || exit 1
 sanitize_workspace_name
 resolve_workspace_identity
 

@@ -18,33 +18,79 @@ divider() { printf "\n${_dim}─────────────────
 # ── Workspace name resolution ──────────────────────────────────────
 
 resolve_workspace() {
+  local _manager _owner _root _name _port _checkout
   WORKSPACE_PROVIDER=""
   WORKSPACE_INVALID_NAME=""
   WORKSPACE_GIT_COMMON_DIR=""
   WORKSPACE_GIT_ROOT_PATH=""
-  WORKSPACE_ROOT_PATH="${SUPERCONDUCTOR_ROOT_PATH:-${SUPERSET_ROOT_PATH:-$CONDUCTOR_ROOT_PATH}}"
-  WORKSPACE_NAME="${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-$CONDUCTOR_WORKSPACE_NAME}}"
+  WORKSPACE_ROOT_PATH=""
+  WORKSPACE_NAME=""
+  _checkout=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  _checkout=$(canonical_git_path "$_checkout") || _checkout=""
 
-  if [ -n "${SUPERCONDUCTOR_ROOT_PATH:-}${SUPERCONDUCTOR_WORKSPACE_NAME:-}" ]; then
-    WORKSPACE_PROVIDER="superconductor"
-  elif [ -n "${SUPERSET_ROOT_PATH:-}${SUPERSET_WORKSPACE_NAME:-}" ]; then
-    WORKSPACE_PROVIDER="superset"
-  elif [ -n "${CONDUCTOR_ROOT_PATH:-}${CONDUCTOR_WORKSPACE_NAME:-}" ]; then
-    WORKSPACE_PROVIDER="conductor"
-  fi
+  # Manager variables can be inherited by shells in other worktrees. Validate
+  # every family before using any of its identity, shared files, or ports.
+  for _manager in SUPERCONDUCTOR SUPERSET CONDUCTOR; do
+    eval '_owner=${'"${_manager}"'_WORKSPACE_PATH:-}'
+    eval '_root=${'"${_manager}"'_ROOT_PATH:-}'
+    eval '_name=${'"${_manager}"'_WORKSPACE_NAME:-}'
+    # SUPERSET_PORT is Superset's notification port, not a workspace port.
+    _port=""
+    [ "$_manager" = SUPERSET ] || eval '_port=${'"${_manager}"'_PORT:-}'
+    [ -n "$_root$_name$_port" ] || continue
+    if [ -n "$_owner" ] && [ -d "$_owner" ]; then
+      _owner=$(canonical_git_path "$_owner") || _owner=""
+    else
+      _owner=""
+    fi
+    if [ -z "$_owner" ] || [ -z "$_checkout" ]; then
+      err "${_manager}_WORKSPACE_PATH must identify an existing checkout directory; cannot verify manager ownership against the current Git top-level. Relaunch from the manager or use a clean shell without that manager's environment."
+      return 1
+    fi
+    if [ "$_owner" != "$_checkout" ]; then
+      unset "${_manager}_ROOT_PATH" "${_manager}_WORKSPACE_NAME" \
+        "${_manager}_WORKSPACE_PATH"
+      [ "$_manager" = SUPERSET ] || unset "${_manager}_PORT"
+      continue
+    fi
+    # A port alone is not an identity: retain Git isolation and registration.
+    [ -n "$_root$_name" ] || continue
+    if [ -z "$WORKSPACE_PROVIDER" ]; then
+      WORKSPACE_PROVIDER=$(printf '%s' "$_manager" | tr '[:upper:]' '[:lower:]')
+      WORKSPACE_ROOT_PATH="$_root"
+      WORKSPACE_NAME="$_name"
+    fi
+  done
 
   # "default" is superset's name for the main branch — treat as no workspace
   if [ "$WORKSPACE_NAME" = "default" ]; then
     WORKSPACE_NAME=""
   fi
 
-  # Existing integrations always win. Fall back to Git's own linked-worktree
-  # metadata when a manager does not provide identity or root variables.
+  # A verified integration wins. Otherwise use this checkout's Git metadata.
   if [ -n "$WORKSPACE_PROVIDER" ]; then
     return
   fi
 
   detect_git_workspace
+}
+
+# Snapshot even unexported manager inputs so sourced project files cannot
+# introduce an unverified family (or resurrect a rejected inherited family).
+manager_environment() (
+  for _manager in SUPERCONDUCTOR SUPERSET CONDUCTOR; do
+    for _field in ROOT_PATH WORKSPACE_NAME WORKSPACE_PATH PORT; do
+      _variable="${_manager}_${_field}"
+      eval '[ "${'"$_variable"'+x}" ]' && export "$_variable"
+    done
+  done
+  export -p | grep -E ' (SUPERCONDUCTOR|SUPERSET|CONDUCTOR)_(ROOT_PATH|WORKSPACE_NAME|WORKSPACE_PATH|PORT)=' || true
+)
+
+clear_manager_environment() {
+  unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH SUPERCONDUCTOR_PORT
+  unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME SUPERSET_WORKSPACE_PATH SUPERSET_PORT
+  unset CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_WORKSPACE_PATH CONDUCTOR_PORT
 }
 
 # Canonicalize a path returned by git rev-parse without requiring newer Git's
@@ -238,9 +284,9 @@ sanitize_workspace_name() {
   _workspace_name_limit=40
   if [ "$WORKSPACE_PROVIDER" = "git" ]; then
     _raw_name="$WORKSPACE_NAME"
-  elif [ -n "${SUPERCONDUCTOR_WORKSPACE_NAME:-}" ]; then
+  elif [ "$WORKSPACE_PROVIDER" = "superconductor" ]; then
     _raw_name="$SUPERCONDUCTOR_WORKSPACE_NAME"
-  elif [ -n "${SUPERSET_WORKSPACE_NAME:-}" ]; then
+  elif [ "$WORKSPACE_PROVIDER" = "superset" ]; then
     _raw_name="$SUPERSET_WORKSPACE_NAME"
     _workspace_name_limit=45
   else
@@ -258,16 +304,15 @@ sanitize_workspace_name() {
 
 # Import a dotenv file as defaults. Values already exported by the caller or
 # workspace manager are restored afterward, so the file cannot replace them.
-# Hooks sourced later may still deliberately override any value.
+# Manager inputs stay frozen, including absent/rejected families. Project
+# defaults such as WORKSPACE_PORT remain supported.
 load_dotenv_defaults() {
   local _dotenv_file _dotenv_existing_exports _dotenv_status
+  local _dotenv_manager_environment
   local _dotenv_workspace_name _dotenv_workspace_provider _dotenv_workspace_root_path
   local _dotenv_workspace_git_common_dir _dotenv_workspace_git_root_path
   local _dotenv_workspace_invalid_name _dotenv_workspace_identity_source
   local _dotenv_workspace_port _dotenv_workspace_port_set
-  local _dotenv_superconductor_port _dotenv_superconductor_port_set
-  local _dotenv_superset_port _dotenv_superset_port_set
-  local _dotenv_conductor_port _dotenv_conductor_port_set
 
   _dotenv_file="${1:-.env}"
   [ -f "$_dotenv_file" ] || return 0
@@ -284,19 +329,16 @@ load_dotenv_defaults() {
   _dotenv_workspace_identity_source="${WORKSPACE_IDENTITY_SOURCE:-}"
   _dotenv_workspace_port="${WORKSPACE_PORT:-}"
   _dotenv_workspace_port_set="${WORKSPACE_PORT+x}"
-  _dotenv_superconductor_port="${SUPERCONDUCTOR_PORT:-}"
-  _dotenv_superconductor_port_set="${SUPERCONDUCTOR_PORT+x}"
-  _dotenv_superset_port="${SUPERSET_PORT:-}"
-  _dotenv_superset_port_set="${SUPERSET_PORT+x}"
-  _dotenv_conductor_port="${CONDUCTOR_PORT:-}"
-  _dotenv_conductor_port_set="${CONDUCTOR_PORT+x}"
 
+  _dotenv_manager_environment=$(manager_environment)
   _dotenv_existing_exports=$(export -p)
   set -a
   . "$_dotenv_file"
   _dotenv_status=$?
   set +a
   eval "$_dotenv_existing_exports"
+  clear_manager_environment
+  [ -z "$_dotenv_manager_environment" ] || eval "$_dotenv_manager_environment"
 
   WORKSPACE_NAME="$_dotenv_workspace_name"
   WORKSPACE_PROVIDER="$_dotenv_workspace_provider"
@@ -313,21 +355,6 @@ load_dotenv_defaults() {
       WORKSPACE_PORT="$_dotenv_workspace_port"; export WORKSPACE_PORT
     else
       unset WORKSPACE_PORT
-    fi
-    if [ -n "$_dotenv_superconductor_port_set" ]; then
-      SUPERCONDUCTOR_PORT="$_dotenv_superconductor_port"; export SUPERCONDUCTOR_PORT
-    else
-      unset SUPERCONDUCTOR_PORT
-    fi
-    if [ -n "$_dotenv_superset_port_set" ]; then
-      SUPERSET_PORT="$_dotenv_superset_port"; export SUPERSET_PORT
-    else
-      unset SUPERSET_PORT
-    fi
-    if [ -n "$_dotenv_conductor_port_set" ]; then
-      CONDUCTOR_PORT="$_dotenv_conductor_port"; export CONDUCTOR_PORT
-    else
-      unset CONDUCTOR_PORT
     fi
   fi
 
@@ -347,6 +374,7 @@ source_workspace_environment_hook() {
   local _environment_workspace_db_suffix_set
   local _environment_workspace_registered_port _environment_workspace_registered_port_set
   local _environment_provider_exports _environment_hook_status _environment_errexit_set
+  local _environment_manager_environment
 
   [ -f bin/workspace-environment-hook ] || return 0
 
@@ -361,8 +389,9 @@ source_workspace_environment_hook() {
   _environment_workspace_db_suffix_set="${WORKSPACE_DB_SUFFIX+x}"
   _environment_workspace_registered_port="${WORKSPACE_REGISTERED_PORT:-}"
   _environment_workspace_registered_port_set="${WORKSPACE_REGISTERED_PORT+x}"
+  _environment_manager_environment=$(manager_environment)
   _environment_provider_exports=$(export -p | grep -E \
-    ' (WORKSPACE_PORT|SUPERCONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT)|SUPERSET_(ROOT_PATH|WORKSPACE_NAME|PORT)|CONDUCTOR_(ROOT_PATH|WORKSPACE_NAME|PORT))=' \
+    ' WORKSPACE_PORT=' \
     || true)
   case "$-" in
     *e*) _environment_errexit_set=1 ;;
@@ -397,10 +426,9 @@ source_workspace_environment_hook() {
   fi
 
   unset WORKSPACE_PORT
-  unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_PORT
-  unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME SUPERSET_PORT
-  unset CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME CONDUCTOR_PORT
   [ -z "$_environment_provider_exports" ] || eval "$_environment_provider_exports"
+  clear_manager_environment
+  [ -z "$_environment_manager_environment" ] || eval "$_environment_manager_environment"
 
   if [ "$_environment_errexit_set" -eq 1 ]; then
     set -e
@@ -450,8 +478,13 @@ validate_workspace_port_block() {
 # otherwise named worktrees receive deterministic 10-port blocks.
 derive_workspace_port() {
   _default_port="$1"
-  _provider_port="${SUPERCONDUCTOR_PORT:-${SUPERSET_PORT:-${CONDUCTOR_PORT:-}}}"
-  _port_name="${WORKSPACE_NAME:-${SUPERCONDUCTOR_WORKSPACE_NAME:-${SUPERSET_WORKSPACE_NAME:-${CONDUCTOR_WORKSPACE_NAME:-}}}}"
+  _provider_port=""
+  case "$WORKSPACE_PROVIDER" in
+    superconductor) _provider_port="${SUPERCONDUCTOR_PORT:-}" ;;
+    conductor) _provider_port="${CONDUCTOR_PORT:-}" ;;
+    git|"") _provider_port="${SUPERCONDUCTOR_PORT:-${CONDUCTOR_PORT:-}}" ;;
+  esac
+  _port_name="${WORKSPACE_NAME:-}"
   if [ -n "${WORKSPACE_PORT:-}" ]; then
     printf '%s\n' "$WORKSPACE_PORT"
     return

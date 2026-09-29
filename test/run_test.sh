@@ -24,6 +24,7 @@ assert_true "run help prints usage" grep -q '^Usage: workspace run$' "$help_outp
 
 make_run_app() {
   app_dir=$(create_fake_app "$1")
+  git -C "$app_dir" init -q
   root_dir=$(create_fake_root "$1")
   mkdir -p "$app_dir/bin"
   cat > "$app_dir/bin/foreman" <<'SCRIPT'
@@ -64,7 +65,7 @@ SCRIPT
 chmod +x "$app_dir/bin/workspace-run-hook"
 
 cd "$app_dir"
-PATH="$fake_bin:$PATH" EXPORTED_VALUE=from-manager CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$fake_bin:$PATH" EXPORTED_VALUE=from-manager CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="dotenv-workspace" CONDUCTOR_PORT=51230 \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
 
@@ -91,10 +92,10 @@ WORKSPACE_ROOT_PATH=/wrong/dotenv/root
 ENV
 printf '%s' "stable-dotenv-identity" > "$app_dir/.conductor-workspace"
 cd "$app_dir"
-info_output=$(CONDUCTOR_ROOT_PATH="$root_dir" \
+info_output=$(CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="renamed-dotenv-workspace" \
   sh "$WORKSPACE_HOME/lib/info.sh")
-PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$fake_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="renamed-dotenv-workspace" \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_true "info resolves dotenv workspace port" sh -c 'printf "%s\n" "$1" | grep -q "^Ports: 51500-51509$"' sh "$info_output"
@@ -153,7 +154,7 @@ for help_case in long short; do
   help_output="$TEST_TMP/archive-help-$help_case.out"
   help_error="$TEST_TMP/archive-help-$help_case.err"
 
-  PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+  PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
     CONDUCTOR_WORKSPACE_NAME="help-provider-workspace" CONDUCTOR_PORT=51500 \
     WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" \
     WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" \
@@ -185,7 +186,7 @@ done
 : > "$archive_rails_log"
 printf '%s' "stable-archive-name" > .conductor-workspace
 printf '%s' "stale-workspace-name" > .workspace
-PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="renamed-provider-workspace" \
   WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" \
   WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" \
@@ -210,7 +211,7 @@ WORKSPACE_PORT=65535
 DATABASE_URL=postgres://wrong-partial.example.test/wrong
 false
 ENV
-assert_false "archive fails when dotenv loading fails" env PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="renamed-provider-workspace" CONDUCTOR_PORT=51600 WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" sh "$WORKSPACE_HOME/lib/archive.sh" >"$failing_archive_output" 2>&1
+assert_false "archive fails when dotenv loading fails" env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="renamed-provider-workspace" CONDUCTOR_PORT=51600 WORKSPACE_TEST_LSOF_LOG="$archive_lsof_log" WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" sh "$WORKSPACE_HOME/lib/archive.sh" >"$failing_archive_output" 2>&1
 assert_true "archive explains dotenv failure" grep -q 'Could not load .env.*archive stopped before cleanup' "$failing_archive_output"
 assert_equal "failed dotenv reaches no database command" "" "$(cat "$archive_rails_log")"
 assert_equal "failed dotenv reaches no port sweep" "" "$(cat "$archive_lsof_log")"
@@ -218,6 +219,7 @@ assert_equal "failed dotenv reaches no port sweep" "" "$(cat "$archive_lsof_log"
 # One source-only environment hook activates the same project toolchain for
 # Foreman startup, the run hook, archive cleanup, and Rails database drops.
 toolchain_app=$(create_fake_app "environment-toolchain")
+git -C "$toolchain_app" init -q
 toolchain_root=$(create_fake_root "environment-toolchain")
 toolchain_bin="$TEST_TMP/lifecycle-toolchain-bin"
 toolchain_log="$TEST_TMP/lifecycle-toolchain.log"
@@ -269,7 +271,7 @@ chmod +x "$toolchain_bin/workspace-test-runtime" "$toolchain_bin/lsof" \
   bin/workspace-archive-hook bin/rails
 
 assert_true "environment hook supplies run and Foreman toolchain" env \
-  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$toolchain_root" \
+  PATH="/usr/bin:/bin" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$toolchain_root" \
   CONDUCTOR_WORKSPACE_NAME="toolchain-workspace" CONDUCTOR_PORT=51700 \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
   WORKSPACE_TEST_TOOLCHAIN_LOG="$toolchain_log" \
@@ -283,7 +285,7 @@ foreman:conductor:$toolchain_root:toolchain-workspace:_toolchain-workspace" \
 : > "$toolchain_log"
 printf '%s' "toolchain-workspace" > .workspace
 assert_true "environment hook supplies archive cleanup toolchain" env \
-  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$toolchain_root" \
+  PATH="/usr/bin:/bin" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$toolchain_root" \
   CONDUCTOR_WORKSPACE_NAME="toolchain-workspace" CONDUCTOR_PORT=51700 \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
   WORKSPACE_TEST_TOOLCHAIN_LOG="$toolchain_log" \
@@ -302,7 +304,7 @@ root_dir=${paths#*|}
 log="$TEST_TMP/url-fallback.log"
 output="$TEST_TMP/url-fallback.out"
 cd "$app_dir"
-PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$fake_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="fallback-workspace" CONDUCTOR_PORT=51300 \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
 
@@ -317,7 +319,7 @@ log="$TEST_TMP/caddy-fallback.log"
 output="$TEST_TMP/caddy-fallback.out"
 printf 'caddy: caddy run\n' > "$app_dir/Procfile.dev"
 cd "$app_dir"
-PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$fake_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="caddy-workspace" CONDUCTOR_PORT=51400 \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
 
@@ -330,7 +332,7 @@ root_dir=${paths#*|}
 log="$TEST_TMP/invalid-name.log"
 cd "$app_dir"
 assert_false "unsafe workspace identity is rejected before run" env PATH="$fake_bin:$PATH" \
-  SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="///" \
+  SUPERSET_WORKSPACE_PATH="$(pwd -P)" SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="///" \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_false "unsafe workspace identity does not start Foreman" [ -f "$log" ]
 
@@ -351,11 +353,11 @@ touch .archive-hook-called
 SCRIPT
 chmod +x "$app_dir/bin/workspace-identity-hook" "$app_dir/bin/workspace-archive-hook"
 cd "$app_dir"
-PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+PATH="$fake_bin:$PATH" CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_true "root run clears dotenv workspace suffix" grep -q '^WORKSPACE_DB_SUFFIX=$' "$log"
 assert_false "root run ignores identity hook" [ -f .identity-hook-called ]
-assert_true "root archive exits without isolation" env CONDUCTOR_ROOT_PATH="$root_dir" sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
+assert_true "root archive exits without isolation" env CONDUCTOR_WORKSPACE_PATH="$(pwd -P)" CONDUCTOR_ROOT_PATH="$root_dir" sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
 assert_false "root archive ignores identity hook" [ -f .identity-hook-called ]
 assert_false "root archive does not run isolated archive hook" [ -f .archive-hook-called ]
 

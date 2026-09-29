@@ -19,6 +19,7 @@ resolve_port() {
 }
 
 # CONDUCTOR_PORT takes precedence
+WORKSPACE_PROVIDER="conductor"
 CONDUCTOR_PORT=4000
 SUPERSET_WORKSPACE_NAME="some-branch"
 result=$(derive_port)
@@ -32,16 +33,19 @@ result=$(derive_port)
 assert_equal "WORKSPACE_PORT takes precedence over providers" "3900" "$result"
 
 unset WORKSPACE_PORT
+WORKSPACE_PROVIDER="superconductor"
 result=$(derive_port)
 assert_equal "SUPERCONDUCTOR_PORT takes precedence" "3950" "$result"
 
 unset SUPERCONDUCTOR_PORT
+WORKSPACE_PROVIDER="superset"
 result=$(derive_port)
-assert_equal "SUPERSET_PORT is honored" "3975" "$result"
+assert_false "SUPERSET_PORT (notification port) is not a workspace port" test "$result" = 3975
 
 # Superset workspace name derives port
 unset CONDUCTOR_PORT SUPERSET_PORT
 SUPERSET_WORKSPACE_NAME="my-feature"
+WORKSPACE_NAME="$SUPERSET_WORKSPACE_NAME"
 result=$(derive_port)
 assert_true "derived port >= 50000" [ "$result" -ge 50000 ]
 assert_true "derived port <= 58990" [ "$result" -le 58990 ]
@@ -52,12 +56,14 @@ assert_equal "port is deterministic" "$result" "$result2"
 
 # Different names get different ports (usually)
 SUPERSET_WORKSPACE_NAME="other-feature"
+WORKSPACE_NAME="$SUPERSET_WORKSPACE_NAME"
 result3=$(derive_port)
 # We can't guarantee different (hash collision possible), but check it's valid
 assert_true "other port in range" [ "$result3" -ge 50000 ]
 
 # Default workspace gets port 3000
 SUPERSET_WORKSPACE_NAME="default"
+WORKSPACE_NAME="$SUPERSET_WORKSPACE_NAME"
 result=$(derive_port)
 assert_equal "default gets 3000" "3000" "$result"
 
@@ -109,6 +115,7 @@ assert_false "zero base is rejected" resolve_port >/dev/null 2>&1
 WORKSPACE_PORT=65535
 assert_false "overflowing explicit block is rejected" resolve_port >/dev/null 2>&1
 unset WORKSPACE_PORT
+WORKSPACE_PROVIDER="conductor"
 CONDUCTOR_PORT=65535
 assert_false "overflowing provider block is rejected" resolve_port >/dev/null 2>&1
 unset CONDUCTOR_PORT

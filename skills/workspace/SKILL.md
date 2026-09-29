@@ -14,7 +14,7 @@ Installed at `~/.workspace`. The CLI is `workspace`.
 Invoke when the user wants to:
 
 - **Onboard a project or refresh its generated integration files** → `workspace init` from the root checkout
-- **Spin up a sibling checkout** (feature branch, experiment) → `bin/workspace bootstrap`
+- **Prepare an existing sibling checkout for application work** → `bin/workspace bootstrap`, unless its lifecycle owner is already running setup or has completed it
 - **Start the dev server** inside a sibling → `bin/workspace run`
 - **Tear down a workspace** when done → `bin/workspace archive`
 - **Customize the lifecycle** (seeding, per-workspace env vars, external cleanup) → edit a hook in `bin/`
@@ -22,12 +22,26 @@ Invoke when the user wants to:
 
 Strong signals you're in workspace territory: a `.workspace` file in the repo, a `.conductor/settings.toml` / `.superconductor/config.json` / `.superset/config.json`, sibling directories like `myapp-feature-x` next to `myapp`, or the user mentioning Conductor / Superset / Superconductor.
 
+## Choose the checkout and lifecycle owner
+
+Use one worktree for each task. Reuse the checkout supplied by Conductor, Superset, Superconductor, or the client. Let its configured lifecycle own setup and teardown. Wait for active setup to finish; starting an agent does not require another bootstrap.
+
+Inside an existing task checkout, start Claude without `--worktree`, or use **Local** when opening it in the Codex desktop app. Request `claude --worktree`, Codex **Worktree** mode, or `git worktree add` only for an intentionally separate task checkout. `workspace bootstrap` prepares a checkout; it does not create one.
+
+The generated Codex local environment runs bootstrap automatically when selected for a new worktree. For file-only scratch work, omit that environment. In a manually managed worktree, bootstrap only when application resources are needed and archive those resources before removing the checkout.
+
+Claude Code worktrees (`.claude/worktrees/…`) are ordinary linked Git worktrees, not a separate Workspace provider. Workspace generates no Claude Code hooks; Claude removing a worktree does not invoke Workspace cleanup.
+
+Manager settings apply only when the canonical `SUPERCONDUCTOR_WORKSPACE_PATH`, `SUPERSET_WORKSPACE_PATH`, or `CONDUCTOR_WORKSPACE_PATH` matches Git's current checkout root. Resolve symlinks before comparison; a manager alias and physical directory can name the same checkout. A different owner path excludes that manager's identity, root, and ports together, leaving a separate linked worktree to Git detection and registration. A `.claude/worktrees/…` path or identity marker alone does not establish ownership.
+
+Manager root, name, or port inputs without a usable matching-family owner path stop lifecycle commands. Use the manager's launch context, or a clean shell without inherited manager settings for an independent Git worktree. Never manufacture an owner path to authorize inherited values. This is a compatibility change for older integrations that omit `*_WORKSPACE_PATH`.
+
 ## Commands
 
 | Command | When to run | What it does |
 | --- | --- | --- |
 | `workspace init` | During onboarding, or later when intentionally refreshing generated files; run from the root checkout | Patches `config/database.yml`, creates/updates `bin/workspace` plus `.workspace-version`, and creates/updates recognized provider configs to use the shim. Does not scaffold optional hooks. Idempotent. |
-| `bin/workspace bootstrap` | In each manager-created sibling or linked checkout created with `git worktree add` | Links untracked shared files, exports the suffix, publishes Git cleanup registration, sources the environment hook, runs the dedicated setup hook (or legacy setup fallback), prepares databases, writes `.workspace`, and runs optional post-setup hooks. In root, sources the environment hook before ordinary setup. Never runs `bin/update`. |
+| `bin/workspace bootstrap` | Called by the lifecycle owner for application setup in an existing checkout; manually when needed if no manager is handling setup | Links untracked shared files, exports the suffix, publishes Git cleanup registration, sources the environment hook, runs the dedicated setup hook (or legacy setup fallback), prepares databases, writes `.workspace`, and runs optional post-setup hooks. In root, sources the environment hook before ordinary setup. Never runs `bin/update`. |
 | `bin/workspace run` | To start the dev server in a sibling | Loads linked `.env` defaults, reserves a Git port and exports `WORKSPACE_DB_SUFFIX`, sources the environment hook, computes authoritative service ports, sources `bin/workspace-run-hook`, displays the configured application URL, then starts foreman. |
 | `bin/workspace archive` | When you're done with a sibling workspace | Sources the environment hook, runs `bin/workspace-archive-hook`, kills processes on the workspace's ports, and drops the suffixed DBs. |
 | `bin/workspace prune` | From the root or any remaining checkout after an external tool removes Git worktrees | Reconciles the shared Git registry and archives resources for worktrees that no longer exist. Safe to re-run. |
@@ -116,7 +130,10 @@ git diff --no-index /dev/null bin/workspace
 shim, minimum revision, database patch, or recognized provider configuration;
 review tracked changes and every `??` generated file before committing.
 
-**Spinning up a feature branch workspace**
+**Creating a separate feature branch workspace manually**
+
+Use this when the task does not already have a checkout supplied by a manager
+or client. Omit bootstrap and run for file-only scratch work.
 
 ```sh
 cd ~/projects
@@ -128,7 +145,9 @@ bin/workspace bootstrap            # symlinks, suffixed DBs, hooks all run
 bin/workspace run                  # start the dev server
 ```
 
-**Tearing down**
+**Tearing down a manually managed workspace**
+
+For a manager-owned checkout, use its configured archive or removal flow.
 
 ```sh
 cd ~/projects/myapp-feature-x
@@ -147,7 +166,7 @@ cd .. && rm -rf myapp-feature-x
 - Generated provider configs call `bin/workspace`, which tries PATH and then `${WORKSPACE_HOME:-$HOME/.workspace}`. It reports an install command when missing and an exact update command when older than `.workspace-version`; it never downloads code automatically.
 - `.workspace` must be non-empty; an empty `.conductor-workspace` retains its legacy unpinned behavior. Both marker paths must be regular, non-symlink files. Reserved, multiline, and control-character identities fail closed instead of silently selecting another database. Existing non-empty `.conductor-workspace` files remain authoritative and are mirrored to `.workspace` after successful bootstrap.
 - Generic Git worktrees are registered so cleanup can recover after an external tool deletes their directories or native Codex cleanup is interrupted. Run `bin/workspace prune` from a surviving checkout to reconcile immediately; the SessionEnd deferred prune and normal bootstrap/run reconciliation are fallback paths. Archive cleans only its current workspace.
-- Port precedence is `WORKSPACE_PORT`, an existing Git registry reservation, `SUPERCONDUCTOR_PORT`, `SUPERSET_PORT`, `CONDUCTOR_PORT`, then deterministic or default allocation. Port inputs must be decimal base ports from `1` through `65526` so the complete 10-port block stays within `1-65535`; leading zeroes are normalized. Invalid values fail before starting processes, and an explicit `WORKSPACE_PORT` already overlapping another Git worktree's block fails instead of silently moving or sharing it. `bin/workspace info` reports the resolved block.
+- Port precedence is `WORKSPACE_PORT`, an existing Git registry reservation, the selected manager's own port, then deterministic or default allocation. Manager identity and ports are never borrowed across families. With only verified manager port inputs, Git identity and registration are preserved; manager port priority is Superconductor, then Conductor. `SUPERSET_PORT` is Superset's notification port and is never used as a workspace port. Manager ports require a usable matching-family owner path and are ignored when that path belongs to another checkout. Port inputs must be decimal base ports from `1` through `65526` so the complete 10-port block stays within `1-65535`; leading zeroes are normalized. Invalid values fail before starting processes, and an explicit `WORKSPACE_PORT` already overlapping another Git worktree's block fails instead of silently moving or sharing it. `bin/workspace info` reports the resolved block.
 
 ## Project application URL
 
@@ -168,4 +187,4 @@ This configures the displayed address, not the web server or certificates.
 
 - Source: <https://github.com/jnunemaker/workspace>
 - Local install: `~/.workspace` (CLI in `~/.workspace/bin/workspace`, lib scripts in `~/.workspace/lib/`)
-- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `SUPERSET_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_ROOT_PATH` (resolved path to the original checkout; guaranteed to be available to the database hook when it names an existing directory), `WORKSPACE_APP_URL_TEMPLATE` (shared display address with a literal `{port}` placeholder), `WORKSPACE_APP_URL` (complete display address overriding the template; legacy run-hook assignments affect only `run`)
+- Environment: `WORKSPACE_HOME` (install location), `WORKSPACE_PORT` (optional base-port override), `SUPERCONDUCTOR_PORT` / `CONDUCTOR_PORT` (provider-assigned base ports; `SUPERSET_PORT` is ignored), `WORKSPACE_DB_SUFFIX` (exported during bootstrap/run), `WORKSPACE_ROOT_PATH` (resolved path to the original checkout; guaranteed to be available to the database hook when it names an existing directory), `WORKSPACE_APP_URL_TEMPLATE` (shared display address with a literal `{port}` placeholder), `WORKSPACE_APP_URL` (complete display address overriding the template; legacy run-hook assignments affect only `run`)
