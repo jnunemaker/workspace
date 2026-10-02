@@ -67,11 +67,16 @@ _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"
 _claude_archived_marker="$_claude_git_dir/workspace-claude-archived"
 _claude_log="$_claude_git_dir/workspace-claude.log"
 
+# The background archive runs as `sh -c ... workspace-claude-archive`, so a
+# PID left behind by a killed archive (reboot, force quit) is only trusted
+# while it still belongs to an archive job and not a reused process ID.
 _claude_archive_running() {
   [ -f "$_claude_archiving_marker" ] || return 1
   _claude_archive_pid=$(cat "$_claude_archiving_marker" 2>/dev/null || true)
-  if [ -n "$_claude_archive_pid" ] && kill -0 "$_claude_archive_pid" 2>/dev/null; then
-    return 0
+  if [ -n "$_claude_archive_pid" ]; then
+    case "$(ps -p "$_claude_archive_pid" -o command= 2>/dev/null || true)" in
+      *workspace-claude-archive*) return 0 ;;
+    esac
   fi
   # The archive died without cleaning up; its archived marker already forces
   # a full bootstrap.
@@ -83,11 +88,11 @@ case "$_claude_event" in
   session-start)
     # Unarchiving can race a background archive from the previous session.
     # Let it finish so it cannot drop databases after setup recreates them,
-    # or forget the branch recorded below once it completes.
-    _claude_waited=0
-    while _claude_archive_running && [ "$_claude_waited" -lt 600 ]; do
+    # or forget the branch recorded below once it completes. There is no
+    # separate limit: if the hook's own timeout stops this wait, nothing has
+    # been recorded yet and the next session start tries again.
+    while _claude_archive_running; do
       sleep 1
-      _claude_waited=$((_claude_waited + 1))
     done
 
     if _claude_branch=$(git symbolic-ref -q --short HEAD); then
@@ -121,7 +126,10 @@ case "$_claude_event" in
     # archive, so a failed one is attempted again on the next archive.
     : > "$_claude_archived_marker"
     # SessionEnd hooks get at most 60 seconds; archive may need longer.
+    # The job records its own PID before working, so a fast failure cannot
+    # remove the marker before it exists.
     nohup sh -c '
+      printf "%s\n" "$$" > "$3"
       printf "=== archive %s\n" "$(date)"
       if sh "$1/archive.sh"; then
         rm -f "$2"
@@ -129,9 +137,13 @@ case "$_claude_event" in
         echo "Archive failed; it will be retried the next time this session is archived."
       fi
       rm -f "$3"
-    ' sh "$WORKSPACE_LIB" "$_claude_branch_marker" "$_claude_archiving_marker" \
-      >> "$_claude_log" 2>&1 &
-    printf '%s\n' "$!" > "$_claude_archiving_marker"
+    ' workspace-claude-archive "$WORKSPACE_LIB" "$_claude_branch_marker" \
+      "$_claude_archiving_marker" >> "$_claude_log" 2>&1 &
+    _claude_job=$!
+    # Return only once the job is visible to a session start that follows.
+    while [ ! -s "$_claude_archiving_marker" ] && kill -0 "$_claude_job" 2>/dev/null; do
+      sleep 0.1
+    done
     exit 0
     ;;
   *)

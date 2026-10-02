@@ -151,6 +151,23 @@ run_hook session-start "$hook_worktree" >/dev/null 2>&1
 assert_equal "racing session-start waits for archive" "archive setup" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
 assert_false "racing session-start leaves no teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
 
+# A marker left by a killed archive whose PID now belongs to another process
+# must not block session start or later archives.
+sleep 30 &
+reused_pid=$!
+printf '%s\n' "$reused_pid" > "$worktree_git_dir/workspace-claude-archiving"
+run_hook session-start "$hook_worktree" >/dev/null 2>&1 &
+reuse_start=$!
+reuse_wait=0
+while kill -0 "$reuse_start" 2>/dev/null && [ "$reuse_wait" -lt 50 ]; do
+  sleep 0.2
+  reuse_wait=$((reuse_wait + 1))
+done
+assert_false "session-start ignores a reused archive PID" sh -c 'kill -0 "$1" 2>/dev/null' sh "$reuse_start"
+kill "$reuse_start" "$reused_pid" 2>/dev/null || true
+wait "$reuse_start" "$reused_pid" 2>/dev/null || true
+assert_false "session-start clears a marker with a reused PID" [ -f "$worktree_git_dir/workspace-claude-archiving" ]
+
 # A later session that starts detached owns no branch, even though an earlier
 # session recorded one.
 assert_true "attached session recorded its branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
