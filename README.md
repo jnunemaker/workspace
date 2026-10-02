@@ -165,7 +165,7 @@ runs hooks from the original checkout and passes the session's worktree only
 as `cwd` in the hook JSON. `claude-hook` moves into that worktree and acts only
 on linked Git worktrees.
 
-- **SessionStart** (`startup|resume`) runs `workspace bootstrap --once`, which
+- **SessionStart** (`startup|resume|fork`) runs `workspace bootstrap --once`, which
   sets up a new worktree a single time and exits quietly in the original
   checkout, in already-bootstrapped worktrees, and under Conductor-family
   managers. It also remembers the branch the session started on. Bootstrap
@@ -181,7 +181,9 @@ on linked Git worktrees.
   attempted again the next time the session is archived.
 - **Unarchive** reattaches the branch and resumes the session. The
   SessionStart hook waits for any archive still running, then runs a full
-  bootstrap again to recreate the databases.
+  bootstrap again to recreate the databases. The worktree keeps ownership of
+  its branch across archive, so if unarchive cannot reattach the branch, the
+  resumed session is still archived the next time it ends detached.
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs

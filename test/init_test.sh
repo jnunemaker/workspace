@@ -117,7 +117,7 @@ assert_true "codex recovery hook respects SessionEnd timeout limit" ruby -rjson 
 
 assert_true "claude settings created" [ -f .claude/settings.json ]
 assert_true "claude settings contain valid JSON" ruby -rjson -e 'JSON.parse(File.read(".claude/settings.json"))'
-assert_true "claude SessionStart runs project shim hook" ruby -rjson -e 'groups = JSON.parse(File.read(".claude/settings.json")).fetch("hooks").fetch("SessionStart"); exit(groups.any? { |group| group["matcher"] == "startup|resume" && group.fetch("hooks").any? { |hook| hook["command"] == %q{"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook session-start} } })'
+assert_true "claude SessionStart runs project shim hook" ruby -rjson -e 'groups = JSON.parse(File.read(".claude/settings.json")).fetch("hooks").fetch("SessionStart"); exit(groups.any? { |group| group["matcher"] == "startup|resume|fork" && group.fetch("hooks").any? { |hook| hook["command"] == %q{"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook session-start} } })'
 assert_true "claude SessionEnd runs project shim hook within budget" ruby -rjson -e 'groups = JSON.parse(File.read(".claude/settings.json")).fetch("hooks").fetch("SessionEnd"); exit(groups.any? { |group| group["matcher"] == "other" && group.fetch("hooks").any? { |hook| hook["command"] == %q{"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook session-end} && hook["timeout"] <= 60 } })'
 claude_settings_before=$(cat .claude/settings.json)
 run_init

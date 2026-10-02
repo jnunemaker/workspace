@@ -590,7 +590,7 @@ _ensure_claude_settings() {
       "SessionStart" => {
         "pattern" => /workspace claude-hook session-start\b/,
         "group" => {
-          "matcher" => "startup|resume",
+          "matcher" => "startup|resume|fork",
           "hooks" => [{
             "type" => "command",
             "command" => "\"$CLAUDE_PROJECT_DIR\"/bin/workspace claude-hook session-start",

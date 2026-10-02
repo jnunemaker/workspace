@@ -104,8 +104,8 @@ rmdir "$worktree_git_dir/rebase-merge"
 run_hook session-end "$hook_worktree/app" >/dev/null 2>&1
 wait_for_archive
 assert_equal "session-end archives after the branch is released" "1" "$(count_log archive)"
-assert_true "session-end records the teardown" [ -f "$worktree_git_dir/workspace-claude-archived" ]
-assert_false "session-end forgets the session branch after a complete archive" [ -f "$worktree_git_dir/workspace-claude-branch" ]
+assert_equal "session-end records a complete teardown" "complete" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
+assert_true "session-end keeps the owned branch across archive" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 assert_false "session-end clears the running archive record" [ -f "$worktree_git_dir/workspace-claude-archiving" ]
 assert_true "session-end logs archive output" grep -q 'Archive complete' "$worktree_git_dir/workspace-claude.log"
 
@@ -129,7 +129,7 @@ git -C "$hook_worktree" checkout -q --detach
 wait_for_archive
 assert_equal "failed archive was attempted" "2" "$(count_log archive)"
 assert_true "failed archive keeps the session branch for retry" [ -f "$worktree_git_dir/workspace-claude-branch" ]
-assert_true "failed archive still forces a full bootstrap" [ -f "$worktree_git_dir/workspace-claude-archived" ]
+assert_equal "failed archive still forces a full bootstrap" "failed" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
 git -C "$hook_worktree" checkout -q claude/feature
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
 assert_equal "session-start repairs a failed archive" "3" "$(count_log setup)"
@@ -137,7 +137,7 @@ git -C "$hook_worktree" checkout -q --detach
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
 wait_for_archive
 assert_equal "archive is retried on the next archive" "3" "$(count_log archive)"
-assert_false "retried archive forgets the session branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
+assert_equal "retried archive completes" "complete" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
 
 # Unarchiving while the background archive still runs waits for it, so the
 # archive cannot drop databases after setup recreates them.
@@ -189,6 +189,15 @@ run_hook session-end "$hook_worktree" >/dev/null 2>&1
 wait_for_archive
 assert_equal "detached resumed session is archived" "5" "$(count_log archive)"
 
+# Unarchive that cannot reattach the branch resumes detached. The worktree
+# still owns its branch, so setup comes back and a later archive tears down.
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
+assert_equal "detached unarchive rebootstraps" "6" "$(count_log setup)"
+assert_false "detached unarchive clears the teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait_for_archive
+assert_equal "detached unarchived session is archived again" "6" "$(count_log archive)"
+
 # Conductor-family managers own setup and archive for their worktrees.
 git -C "$hook_worktree" checkout -q claude/feature
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
@@ -196,7 +205,7 @@ git -C "$hook_worktree" checkout -q --detach
 (export CONDUCTOR_ROOT_PATH="$hook_root" CONDUCTOR_WORKSPACE_NAME="managed"
   run_hook session-end "$hook_worktree") >/dev/null 2>&1
 sleep 1
-assert_equal "session-end leaves managed workspaces alone" "5" "$(count_log archive)"
+assert_equal "session-end leaves managed workspaces alone" "6" "$(count_log archive)"
 git -C "$hook_worktree" checkout -q claude/feature
 
 # Worktrees that start detached (Codex) are never archived by Claude hooks.
@@ -205,6 +214,6 @@ run_hook session-end "$codex_worktree" >/dev/null 2>&1
 sleep 1
 codex_git_dir=$(git -C "$codex_worktree" rev-parse --absolute-git-dir)
 assert_false "detached-at-start worktree has no session branch" [ -f "$codex_git_dir/workspace-claude-branch" ]
-assert_equal "detached-at-start worktree is not archived" "5" "$(count_log archive)"
+assert_equal "detached-at-start worktree is not archived" "6" "$(count_log archive)"
 
 report "claude-hook"
