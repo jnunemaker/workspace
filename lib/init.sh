@@ -563,6 +563,95 @@ EOF
   ok "Created .codex/hooks.json"
 fi
 
+# ── Create Claude Code session hooks ────────────────────────────
+#
+# Claude Code (desktop worktree sessions included) has no native setup or
+# cleanup script, so lifecycle rides on session hooks. Hooks run from the
+# original checkout, so they call its shim through CLAUDE_PROJECT_DIR and
+# `workspace claude-hook` moves into the session's worktree from the hook
+# JSON. See lib/claude_hook.sh for the archive detection rules.
+# Existing settings are merged: other keys and hooks are preserved, and a
+# Workspace hook is only added when no hook already runs that command.
+
+_ensure_claude_settings() {
+  _claude_settings="$1"
+  _claude_directory=$(dirname -- "$_claude_settings")
+  mkdir -p "$_claude_directory"
+  _claude_temporary=$(mktemp "$_claude_directory/.workspace-init.XXXXXX") || return 1
+
+  if ! ruby -rjson -e '
+    path = ARGV.fetch(0)
+    settings = File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    raise "settings must be an object" unless Hash === settings
+    hooks = settings["hooks"] ||= {}
+    raise "hooks must be an object" unless Hash === hooks
+
+    wanted = {
+      "SessionStart" => {
+        "pattern" => /workspace claude-hook session-start\b/,
+        "group" => {
+          "matcher" => "startup|resume|fork",
+          "hooks" => [{
+            "type" => "command",
+            "command" => "\"$CLAUDE_PROJECT_DIR\"/bin/workspace claude-hook session-start",
+            "timeout" => 1800,
+            "statusMessage" => "Bootstrapping workspace"
+          }]
+        }
+      },
+      "SessionEnd" => {
+        "pattern" => /workspace claude-hook session-end\b/,
+        "group" => {
+          "matcher" => "other",
+          "hooks" => [{
+            "type" => "command",
+            "command" => "\"$CLAUDE_PROJECT_DIR\"/bin/workspace claude-hook session-end",
+            "timeout" => 5,
+            "statusMessage" => "Checking workspace archive"
+          }]
+        }
+      }
+    }
+
+    wanted.each do |event, spec|
+      groups = hooks[event] ||= []
+      raise "#{event} must be an array" unless Array === groups
+      present = groups.any? do |group|
+        Hash === group && Array === group["hooks"] && group["hooks"].any? do |hook|
+          Hash === hook && String === hook["command"] && hook["command"] =~ spec["pattern"]
+        end
+      end
+      groups << spec["group"] unless present
+    end
+
+    print JSON.pretty_generate(settings) + "\n"
+  ' "$_claude_settings" > "$_claude_temporary" 2>/dev/null; then
+    rm -f "$_claude_temporary"
+    return 1
+  fi
+
+  _finish_atomic_write "$_claude_temporary" "$_claude_settings" 644
+}
+
+if _linked_provider_config .claude/settings.json; then
+  :
+elif ! command -v ruby >/dev/null 2>&1; then
+  warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
+elif [ -f .claude/settings.json ]; then
+  _use_project_workspace_entrypoint .claude/settings.json
+  if _ensure_claude_settings .claude/settings.json; then
+    step ".claude/settings.json already exists (Workspace hooks ensured)"
+  else
+    warn "Couldn't parse .claude/settings.json — left it unchanged."
+    warn "Add the SessionStart and SessionEnd hooks from the Workspace README by hand."
+  fi
+elif _ensure_claude_settings .claude/settings.json; then
+  ok "Created .claude/settings.json"
+else
+  rmdir .claude 2>/dev/null || true
+  warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
+fi
+
 # ── Add .workspace to .gitignore ────────────────────────────────
 
 if [ -f .gitignore ] && grep -qxF '.workspace' .gitignore; then
