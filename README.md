@@ -174,11 +174,18 @@ on linked Git worktrees.
   remembered branch has been released. The desktop app archives a session by
   detaching the worktree's HEAD, and it never deletes the worktree directory,
   so a released branch is what separates archive from quitting the app or a
-  stopped session. Worktrees that started detached (such as Codex worktrees)
-  and worktrees mid-rebase or mid-bisect are left alone. Archive output is
-  logged to `workspace-claude.log` in the worktree's Git directory.
-- **Unarchive** reattaches the branch and resumes the session, and the
-  SessionStart hook runs a full bootstrap again to recreate the databases.
+  stopped session. Sessions that started detached (such as in Codex
+  worktrees), worktrees mid-rebase or mid-bisect, and Conductor-family
+  workspaces are left alone. Archive output is logged to
+  `workspace-claude.log` in the worktree's Git directory; a failed archive is
+  attempted again the next time the session is archived.
+- **Unarchive** reattaches the branch and resumes the session. The
+  SessionStart hook waits for any archive still running, then runs a full
+  bootstrap again to recreate the databases.
+
+Both hooks resolve the worktree root from the session's directory, so they
+work when the session has moved into a subdirectory. Merging the hooks needs
+Ruby; without it `workspace init` skips `.claude/settings.json` with a warning.
 
 If you deliberately detach HEAD in a Claude worktree and the session ends, it
 is treated as archived; resuming the session bootstraps it again with empty

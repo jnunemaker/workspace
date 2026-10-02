@@ -635,6 +635,8 @@ _ensure_claude_settings() {
 
 if _linked_provider_config .claude/settings.json; then
   :
+elif ! command -v ruby >/dev/null 2>&1; then
+  warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
 elif [ -f .claude/settings.json ]; then
   _use_project_workspace_entrypoint .claude/settings.json
   if _ensure_claude_settings .claude/settings.json; then
@@ -646,8 +648,8 @@ elif [ -f .claude/settings.json ]; then
 elif _ensure_claude_settings .claude/settings.json; then
   ok "Created .claude/settings.json"
 else
-  err "Could not create .claude/settings.json"
-  exit 1
+  rmdir .claude 2>/dev/null || true
+  warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
 fi
 
 # ── Add .workspace to .gitignore ────────────────────────────────
