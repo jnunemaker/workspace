@@ -25,7 +25,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/registry.sh"
 
 [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] && {
-  echo "Usage: workspace bootstrap"
+  echo "Usage: workspace bootstrap [--once]"
   echo ""
   echo "Root/default checkout: sources the environment hook, then runs the"
   echo "project's ordinary setup script only."
@@ -38,10 +38,25 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
   echo "original checkout."
   echo ""
   echo "Workspace never runs bin/update."
+  echo ""
+  echo "Options:"
+  echo "  --once  Only bootstrap a linked Git worktree that has no .workspace"
+  echo "          marker yet; exit quietly otherwise (for agent session hooks)"
   exit 0
 }
 
+_bootstrap_once=false
+[ "${1:-}" != "--once" ] || _bootstrap_once=true
+
 resolve_workspace
+
+# Session hooks fire for every agent session, including the original checkout,
+# resumed worktrees, and checkouts whose manager already runs setup. Only an
+# unmanaged linked worktree that has never completed identity setup needs work.
+if [ "$_bootstrap_once" = true ]; then
+  [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
+  [ ! -e .workspace ] || exit 0
+fi
 sanitize_workspace_name
 resolve_workspace_identity
 detect_app_name

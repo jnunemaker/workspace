@@ -47,7 +47,7 @@ bin/workspace run
 bin/workspace archive
 ```
 
-Codex, Conductor, Superset, and Superconductor use the same `bin/workspace`
+Claude Code, Codex, Conductor, Superset, and Superconductor use the same `bin/workspace`
 entrypoint from their generated project configuration. The root checkout keeps
 using the application's ordinary `bin/setup`, `bin/update`, and `bin/dev`
 commands.
@@ -90,8 +90,8 @@ it does not run managed-only hooks, link files, suffix databases, or call
 Workspace lifecycle commands never invoke `bin/update`.
 
 `workspace init` creates a committed project entrypoint at `bin/workspace` and a
-minimum revision contract at `.workspace-version`. Generated Codex, Conductor,
-Superset, and Superconductor commands use this entrypoint. It first tries
+minimum revision contract at `.workspace-version`. Generated Claude Code, Codex,
+Conductor, Superset, and Superconductor commands use this entrypoint. It first tries
 `workspace` on `PATH`, then `${WORKSPACE_HOME:-$HOME/.workspace}/bin/workspace`,
 so provider shells do not need to load user dotfiles. A missing install prints
 the one-time install command; an older install prints the exact update command.
@@ -154,6 +154,40 @@ exports `WORKSPACE_PROVIDER`, `WORKSPACE_ROOT_PATH`, and the detected
 `WORKSPACE_NAME` while invoking it. Once either marker exists, the hook is not
 called. A non-empty `.conductor-workspace` remains authoritative for the
 worktree until the project removes it.
+
+## Claude Code worktrees
+
+Claude Code, including worktree sessions in the Claude desktop app, has no
+native setup or cleanup script setting, so `workspace init` merges two hooks
+into `.claude/settings.json`. Both call the original checkout's shim as
+`"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook <event>`, because Claude Code
+runs hooks from the original checkout and passes the session's worktree only
+as `cwd` in the hook JSON. `claude-hook` moves into that worktree and acts only
+on linked Git worktrees.
+
+- **SessionStart** (`startup|resume`) runs `workspace bootstrap --once`, which
+  sets up a new worktree a single time and exits quietly in the original
+  checkout, in already-bootstrapped worktrees, and under Conductor-family
+  managers. It also remembers the branch the session started on. Bootstrap
+  output goes to stderr so it does not enter Claude's context.
+- **SessionEnd** (`other`) archives the worktree in the background when the
+  remembered branch has been released. The desktop app archives a session by
+  detaching the worktree's HEAD, and it never deletes the worktree directory,
+  so a released branch is what separates archive from quitting the app or a
+  stopped session. Worktrees that started detached (such as Codex worktrees)
+  and worktrees mid-rebase or mid-bisect are left alone. Archive output is
+  logged to `workspace-claude.log` in the worktree's Git directory.
+- **Unarchive** reattaches the branch and resumes the session, and the
+  SessionStart hook runs a full bootstrap again to recreate the databases.
+
+If you deliberately detach HEAD in a Claude worktree and the session ends, it
+is treated as archived; resuming the session bootstraps it again with empty
+databases.
+
+Existing `.claude/settings.json` files are merged: other settings and hooks are
+kept, and each Workspace hook is added only when no hook already runs that
+command. An unparseable or linked settings file is left unchanged. Commit the
+generated file so new worktrees include it.
 
 ## Codex worktrees
 
