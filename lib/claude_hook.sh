@@ -48,6 +48,8 @@ _claude_input=$(cat)
 _claude_cwd=$(printf '%s' "$_claude_input" | tr -d '\n' \
   | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p')
 [ -n "$_claude_cwd" ] && [ -d "$_claude_cwd" ] || exit 0
+_claude_source=$(printf '%s' "$_claude_input" | tr -d '\n' \
+  | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([a-z_]*\)".*/\1/p')
 cd "$_claude_cwd"
 
 # The session may have moved into a subdirectory; lifecycle commands run from
@@ -97,8 +99,10 @@ case "$_claude_event" in
 
     if _claude_branch=$(git symbolic-ref -q --short HEAD); then
       printf '%s\n' "$_claude_branch" > "$_claude_branch_marker"
-    else
-      # A detached session owns no branch, even if an earlier session did.
+    elif [ "$_claude_source" != "resume" ]; then
+      # A new session that starts detached owns no branch, even if an earlier
+      # session did. A resumed session keeps the branch it already owned, so
+      # archiving it later still tears down what it set up.
       rm -f "$_claude_branch_marker"
     fi
 

@@ -50,7 +50,7 @@ worktree_git_dir=$(git -C "$hook_worktree" rev-parse --absolute-git-dir)
 
 # Hooks run from the original checkout; the session worktree arrives as JSON.
 run_hook() {
-  printf '{"session_id":"abc","cwd":"%s","hook_event_name":"%s"}' "$2" "$1" \
+  printf '{"session_id":"abc","cwd":"%s","hook_event_name":"%s","source":"%s"}' "$2" "$1" "${3:-startup}" \
     | (cd "$hook_root" && PATH="$fake_bin:$PATH" WORKSPACE_TEST_LOG="$hook_log" \
       sh "$WORKSPACE_HOME/lib/claude_hook.sh" "$1")
 }
@@ -178,6 +178,17 @@ run_hook session-end "$hook_worktree" >/dev/null 2>&1
 sleep 1
 assert_equal "stale branch does not trigger archive" "4" "$(count_log archive)"
 
+# A resumed session keeps the branch it owned even when it resumes detached,
+# so archiving it later still tears down.
+git -C "$hook_worktree" checkout -q claude/feature
+run_hook session-start "$hook_worktree" >/dev/null 2>&1
+git -C "$hook_worktree" checkout -q --detach
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
+assert_equal "detached resume keeps the session branch" "claude/feature" "$(cat "$worktree_git_dir/workspace-claude-branch" 2>/dev/null)"
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait_for_archive
+assert_equal "detached resumed session is archived" "5" "$(count_log archive)"
+
 # Conductor-family managers own setup and archive for their worktrees.
 git -C "$hook_worktree" checkout -q claude/feature
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
@@ -185,7 +196,7 @@ git -C "$hook_worktree" checkout -q --detach
 (export CONDUCTOR_ROOT_PATH="$hook_root" CONDUCTOR_WORKSPACE_NAME="managed"
   run_hook session-end "$hook_worktree") >/dev/null 2>&1
 sleep 1
-assert_equal "session-end leaves managed workspaces alone" "4" "$(count_log archive)"
+assert_equal "session-end leaves managed workspaces alone" "5" "$(count_log archive)"
 git -C "$hook_worktree" checkout -q claude/feature
 
 # Worktrees that start detached (Codex) are never archived by Claude hooks.
@@ -194,6 +205,6 @@ run_hook session-end "$codex_worktree" >/dev/null 2>&1
 sleep 1
 codex_git_dir=$(git -C "$codex_worktree" rev-parse --absolute-git-dir)
 assert_false "detached-at-start worktree has no session branch" [ -f "$codex_git_dir/workspace-claude-branch" ]
-assert_equal "detached-at-start worktree is not archived" "4" "$(count_log archive)"
+assert_equal "detached-at-start worktree is not archived" "5" "$(count_log archive)"
 
 report "claude-hook"
