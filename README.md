@@ -170,28 +170,32 @@ on linked Git worktrees.
   checkout, in already-bootstrapped worktrees, and under Conductor-family
   managers. It also remembers the branch the session started on. Bootstrap
   output goes to stderr so it does not enter Claude's context.
-- **SessionEnd** (`other`) archives the worktree in the background when the
-  remembered branch has been released. The desktop app archives a session by
-  detaching the worktree's HEAD, and it never deletes the worktree directory,
-  so a released branch is what separates archive from quitting the app or a
-  stopped session. Sessions that started detached (such as in Codex
-  worktrees), worktrees mid-rebase or mid-bisect, and Conductor-family
-  workspaces are left alone. Archive output is logged to
+- **SessionEnd** (`other`) archives the worktree in the background when a
+  session that started on its branch ends detached. The desktop app archives
+  a session by detaching the worktree's HEAD, and it never deletes the
+  worktree directory, so a released branch is what separates archive from
+  quitting the app or a stopped session. If session start is still setting
+  up, the archive waits for it to finish. Worktrees mid-rebase or mid-bisect
+  and Conductor-family workspaces are left alone. Archive output is logged to
   `workspace-claude.log` in the worktree's Git directory; a failed archive is
   attempted again the next time the session is archived.
 - **Unarchive** reattaches the branch and resumes the session. The
   SessionStart hook waits for any archive still running, then runs a full
-  bootstrap again to recreate the databases. The worktree keeps ownership of
-  its branch across archive, so if unarchive cannot reattach the branch, the
-  resumed session is still archived the next time it ends detached.
+  bootstrap again to recreate the databases.
+
+A session that starts or resumes detached — in a Codex worktree, or after an
+unarchive that could not reattach its branch — is never archived
+automatically, because quitting and archiving look identical for it.
+Leaving its databases behind is safer than dropping them; run
+`bin/workspace archive` in that worktree when you are done with it.
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs
 Ruby; without it `workspace init` skips `.claude/settings.json` with a warning.
 
-If you deliberately detach HEAD in a Claude worktree and the session ends, it
-is treated as archived; resuming the session bootstraps it again with empty
-databases.
+If you deliberately detach HEAD during a Claude session that started on its
+branch and the session then ends, it is treated as archived; resuming the
+session bootstraps it again with empty databases.
 
 Existing `.claude/settings.json` files are merged: other settings and hooks are
 kept, and each Workspace hook is added only when no hook already runs that

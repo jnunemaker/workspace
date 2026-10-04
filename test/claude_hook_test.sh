@@ -24,6 +24,7 @@ exit 0
 EOF
 cat > "$hook_root/bin/setup" <<'EOF'
 #!/bin/sh
+[ -z "${WORKSPACE_TEST_SETUP_SLEEP:-}" ] || sleep "$WORKSPACE_TEST_SETUP_SLEEP"
 printf 'setup\n' >> "$WORKSPACE_TEST_LOG"
 EOF
 cat > "$hook_root/bin/workspace-archive-hook" <<'EOF'
@@ -104,8 +105,8 @@ rmdir "$worktree_git_dir/rebase-merge"
 run_hook session-end "$hook_worktree/app" >/dev/null 2>&1
 wait_for_archive
 assert_equal "session-end archives after the branch is released" "1" "$(count_log archive)"
-assert_equal "session-end records a complete teardown" "complete" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
-assert_true "session-end keeps the owned branch across archive" [ -f "$worktree_git_dir/workspace-claude-branch" ]
+assert_true "session-end records the teardown" [ -f "$worktree_git_dir/workspace-claude-archived" ]
+assert_false "session-end forgets the session branch after a complete archive" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 assert_false "session-end clears the running archive record" [ -f "$worktree_git_dir/workspace-claude-archiving" ]
 assert_true "session-end logs archive output" grep -q 'Archive complete' "$worktree_git_dir/workspace-claude.log"
 
@@ -116,9 +117,10 @@ assert_equal "session-end archives only once" "1" "$(count_log archive)"
 # Unarchive reattaches the branch and resumes; databases must come back even
 # though the .workspace marker survived archive.
 git -C "$hook_worktree" checkout -q claude/feature
-run_hook session-start "$hook_worktree/app" >/dev/null 2>&1
+run_hook session-start "$hook_worktree/app" resume >/dev/null 2>&1
 assert_equal "session-start rebootstraps an unarchived worktree from a subdirectory" "2" "$(count_log setup)"
 assert_false "session-start clears the teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
+assert_false "session-start clears its setup record" [ -f "$worktree_git_dir/workspace-claude-bootstrapping" ]
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
 assert_equal "session-start returns to bootstrap-once after recovery" "2" "$(count_log setup)"
 
@@ -129,34 +131,57 @@ git -C "$hook_worktree" checkout -q --detach
 wait_for_archive
 assert_equal "failed archive was attempted" "2" "$(count_log archive)"
 assert_true "failed archive keeps the session branch for retry" [ -f "$worktree_git_dir/workspace-claude-branch" ]
-assert_equal "failed archive still forces a full bootstrap" "failed" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
+assert_true "failed archive still forces a full bootstrap" [ -f "$worktree_git_dir/workspace-claude-archived" ]
 git -C "$hook_worktree" checkout -q claude/feature
-run_hook session-start "$hook_worktree" >/dev/null 2>&1
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
 assert_equal "session-start repairs a failed archive" "3" "$(count_log setup)"
 git -C "$hook_worktree" checkout -q --detach
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
 wait_for_archive
 assert_equal "archive is retried on the next archive" "3" "$(count_log archive)"
-assert_equal "retried archive completes" "complete" "$(cat "$worktree_git_dir/workspace-claude-archived" 2>/dev/null)"
+assert_false "retried archive forgets the session branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 
 # Unarchiving while the background archive still runs waits for it, so the
 # archive cannot drop databases after setup recreates them.
 git -C "$hook_worktree" checkout -q claude/feature
-run_hook session-start "$hook_worktree" >/dev/null 2>&1
-assert_equal "setup before race" "4" "$(count_log setup)"
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
+assert_equal "setup before archive race" "4" "$(count_log setup)"
 git -C "$hook_worktree" checkout -q --detach
 (export WORKSPACE_TEST_ARCHIVE_SLEEP=2; run_hook session-end "$hook_worktree") >/dev/null 2>&1
 git -C "$hook_worktree" checkout -q claude/feature
-run_hook session-start "$hook_worktree" >/dev/null 2>&1
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
 assert_equal "racing session-start waits for archive" "archive setup" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
 assert_false "racing session-start leaves no teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
 
+# Archiving while session start is still setting up waits for setup, so the
+# archive cannot drop databases that setup creates afterward.
+git -C "$hook_worktree" checkout -q --detach
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait_for_archive
+assert_equal "archive before setup race" "5" "$(count_log archive)"
+git -C "$hook_worktree" checkout -q claude/feature
+(export WORKSPACE_TEST_SETUP_SLEEP=2; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
+setup_race_start=$!
+setup_race_wait=0
+while [ ! -f "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$setup_race_wait" -lt 50 ]; do
+  sleep 0.1
+  setup_race_wait=$((setup_race_wait + 1))
+done
+git -C "$hook_worktree" checkout -q --detach
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait "$setup_race_start" 2>/dev/null || true
+wait_for_archive
+assert_equal "archive during setup waits for setup" "setup archive" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
+assert_true "archive after setup marks the teardown" [ -f "$worktree_git_dir/workspace-claude-archived" ]
+assert_false "archive after setup forgets the session branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
+
 # A marker left by a killed archive whose PID now belongs to another process
 # must not block session start or later archives.
+git -C "$hook_worktree" checkout -q claude/feature
 sleep 30 &
 reused_pid=$!
 printf '%s\n' "$reused_pid" > "$worktree_git_dir/workspace-claude-archiving"
-run_hook session-start "$hook_worktree" >/dev/null 2>&1 &
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1 &
 reuse_start=$!
 reuse_wait=0
 while kill -0 "$reuse_start" 2>/dev/null && [ "$reuse_wait" -lt 50 ]; do
@@ -176,27 +201,18 @@ run_hook session-start "$hook_worktree" >/dev/null 2>&1
 assert_false "detached session-start clears a stale branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
 sleep 1
-assert_equal "stale branch does not trigger archive" "4" "$(count_log archive)"
+assert_equal "stale branch does not trigger archive" "6" "$(count_log archive)"
 
-# A resumed session keeps the branch it owned even when it resumes detached,
-# so archiving it later still tears down.
+# Quitting looks exactly like archiving for a session that resumed detached,
+# so it is never archived automatically; leaving databases is safer.
 git -C "$hook_worktree" checkout -q claude/feature
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
 git -C "$hook_worktree" checkout -q --detach
 run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
-assert_equal "detached resume keeps the session branch" "claude/feature" "$(cat "$worktree_git_dir/workspace-claude-branch" 2>/dev/null)"
+assert_false "detached resume owns no branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-wait_for_archive
-assert_equal "detached resumed session is archived" "5" "$(count_log archive)"
-
-# Unarchive that cannot reattach the branch resumes detached. The worktree
-# still owns its branch, so setup comes back and a later archive tears down.
-run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
-assert_equal "detached unarchive rebootstraps" "6" "$(count_log setup)"
-assert_false "detached unarchive clears the teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
-run_hook session-end "$hook_worktree" >/dev/null 2>&1
-wait_for_archive
-assert_equal "detached unarchived session is archived again" "6" "$(count_log archive)"
+sleep 1
+assert_equal "detached resumed session is not archived" "6" "$(count_log archive)"
 
 # Conductor-family managers own setup and archive for their worktrees.
 git -C "$hook_worktree" checkout -q claude/feature

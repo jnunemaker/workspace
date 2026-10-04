@@ -10,20 +10,20 @@
 #   - Archiving fires SessionEnd "other" after releasing the worktree's branch
 #     (detached HEAD). The worktree directory is never deleted.
 #
-# session-start bootstraps the worktree once and remembers which branch the
-# session owns. session-end archives only when that remembered branch has been
-# released, which separates archive from quitting the app or a stopped
-# process, and never touches worktrees that started detached (Codex).
+# session-start bootstraps the worktree once and records whether the session
+# started on a branch. session-end archives only when a session that started
+# on its branch ends detached, which is what archive does. A session that
+# starts or resumes detached (Codex worktrees, or an unarchive that could not
+# reattach its branch) is never archived automatically: when quit and archive
+# look identical, leaving databases behind is safer than dropping them. Run
+# `bin/workspace archive` by hand in that case.
 #
 # State lives in the worktree's private Git directory:
-#   workspace-claude-branch     branch the worktree's session owns; kept across
-#                               archive so an unarchive that cannot reattach
-#                               the branch still owns, and later archives, it
-#   workspace-claude-archiving  PID of a background archive still running
-#   workspace-claude-archived   teardown state: started, failed, or complete.
-#                               Present means the next start must fully
-#                               bootstrap; "complete" means do not archive again
-#   workspace-claude.log        background archive output
+#   workspace-claude-branch         branch the current session started on
+#   workspace-claude-bootstrapping  PID of a session-start still setting up
+#   workspace-claude-archiving      PID of a background archive still running
+#   workspace-claude-archived       teardown ran; next start must fully bootstrap
+#   workspace-claude.log            background archive output
 
 set -e
 
@@ -52,8 +52,6 @@ _claude_input=$(cat)
 _claude_cwd=$(printf '%s' "$_claude_input" | tr -d '\n' \
   | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p')
 [ -n "$_claude_cwd" ] && [ -d "$_claude_cwd" ] || exit 0
-_claude_source=$(printf '%s' "$_claude_input" | tr -d '\n' \
-  | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([a-z_]*\)".*/\1/p')
 cd "$_claude_cwd"
 
 # The session may have moved into a subdirectory; lifecycle commands run from
@@ -69,25 +67,31 @@ resolve_workspace
 
 _claude_git_dir=$(git rev-parse --absolute-git-dir)
 _claude_branch_marker="$_claude_git_dir/workspace-claude-branch"
+_claude_bootstrapping_marker="$_claude_git_dir/workspace-claude-bootstrapping"
 _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"
 _claude_archived_marker="$_claude_git_dir/workspace-claude-archived"
 _claude_log="$_claude_git_dir/workspace-claude.log"
 
-# The background archive runs as `sh -c ... workspace-claude-archive`, so a
-# PID left behind by a killed archive (reboot, force quit) is only trusted
-# while it still belongs to an archive job and not a reused process ID.
-_claude_archive_running() {
-  [ -f "$_claude_archiving_marker" ] || return 1
-  _claude_archive_pid=$(cat "$_claude_archiving_marker" 2>/dev/null || true)
-  if [ -n "$_claude_archive_pid" ]; then
-    case "$(ps -p "$_claude_archive_pid" -o command= 2>/dev/null || true)" in
-      *workspace-claude-archive*) return 0 ;;
+# A PID left in a marker by a killed hook or job (reboot, force quit) is only
+# trusted while it still belongs to that hook or job, not a reused process ID.
+# Prints nothing; returns 0 while the process named in the marker is alive.
+_claude_marker_live() {
+  _claude_marker="$1"
+  _claude_marker_command="$2"
+  [ -f "$_claude_marker" ] || return 1
+  _claude_marker_pid=$(cat "$_claude_marker" 2>/dev/null || true)
+  if [ -n "$_claude_marker_pid" ]; then
+    case "$(ps -p "$_claude_marker_pid" -o command= 2>/dev/null || true)" in
+      *"$_claude_marker_command"*) return 0 ;;
     esac
   fi
-  # The archive died without cleaning up; its archived marker already forces
-  # a full bootstrap.
-  rm -f "$_claude_archiving_marker"
+  rm -f "$_claude_marker"
   return 1
+}
+
+# The background archive runs as `sh -c ... workspace-claude-archive`.
+_claude_archive_running() {
+  _claude_marker_live "$_claude_archiving_marker" workspace-claude-archive
 }
 
 case "$_claude_event" in
@@ -101,27 +105,30 @@ case "$_claude_event" in
       sleep 1
     done
 
+    # Only a session that starts on a branch can later be recognized as
+    # archived, even if an earlier session owned one.
     if _claude_branch=$(git symbolic-ref -q --short HEAD); then
       printf '%s\n' "$_claude_branch" > "$_claude_branch_marker"
-    elif [ "$_claude_source" != "resume" ]; then
-      # A new session that starts detached owns no branch, even if an earlier
-      # session did. A resumed session keeps the branch it already owned, so
-      # archiving it later still tears down what it set up.
+    else
       rm -f "$_claude_branch_marker"
     fi
+
+    # Archiving during setup waits for this marker, so the archive cannot
+    # drop databases that setup is still creating.
+    printf '%s\n' "$$" > "$_claude_bootstrapping_marker.$$"
+    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
+    trap 'rm -f "$_claude_bootstrapping_marker"' EXIT
 
     # Bootstrap output belongs in the hook log, not Claude's context.
     # An unarchived worktree still has its .workspace marker but no databases,
     # so --once would skip it. Keep the archived marker until setup succeeds.
     if [ -f "$_claude_archived_marker" ]; then
-      # Until setup succeeds the worktree is not fully torn down either, so a
-      # later archive must run again.
-      printf 'started\n' > "$_claude_archived_marker"
       sh "$WORKSPACE_LIB/bootstrap.sh" >&2
       rm -f "$_claude_archived_marker"
-      exit 0
+    else
+      sh "$WORKSPACE_LIB/bootstrap.sh" --once >&2
     fi
-    exec sh "$WORKSPACE_LIB/bootstrap.sh" --once >&2
+    exit 0
     ;;
   session-end)
     [ -f "$_claude_branch_marker" ] || exit 0
@@ -131,18 +138,17 @@ case "$_claude_event" in
       [ ! -e "$_claude_git_dir/$_claude_in_progress" ] || exit 0
     done
     ! _claude_archive_running || exit 0
-    # Ending detached again after a complete archive, with no session start
-    # in between, is not a second archive.
-    [ "$(cat "$_claude_archived_marker" 2>/dev/null || true)" != "complete" ] || exit 0
 
-    # Teardown may stop partway, so mark the worktree for a full bootstrap
-    # before starting. A failed archive is attempted again on the next archive.
-    printf 'started\n' > "$_claude_archived_marker"
     # SessionEnd hooks get at most 60 seconds; archive may need longer. The
     # job runs in its own session so it survives Claude Code stopping the
     # hook's process group, and records its own PID (via rename, so readers
     # never see a partial file) before working. macOS has no setsid command,
     # but ships Perl.
+    #
+    # The job first waits for a session start still setting up, then marks
+    # the worktree for a full bootstrap before tearing down, since teardown
+    # may stop partway. The session branch is forgotten only after a complete
+    # archive, so a failed one is attempted again on the next archive.
     if command -v setsid >/dev/null 2>&1; then
       set -- setsid
     elif command -v perl >/dev/null 2>&1; then
@@ -151,18 +157,25 @@ case "$_claude_event" in
       set --
     fi
     "$@" nohup sh -c '
-      printf "%s\n" "$$" > "$3.$$" && mv -f "$3.$$" "$3"
+      printf "%s\n" "$$" > "$4.$$" && mv -f "$4.$$" "$4"
+      while [ -f "$5" ]; do
+        _pid=$(cat "$5" 2>/dev/null || true)
+        case "$(ps -p "${_pid:-0}" -o command= 2>/dev/null || true)" in
+          *"claude_hook.sh session-start"*) sleep 1 ;;
+          *) rm -f "$5" ;;
+        esac
+      done
       printf "=== archive %s\n" "$(date)"
+      : > "$3"
       if sh "$1/archive.sh"; then
-        _state=complete
+        rm -f "$2"
       else
-        _state=failed
         echo "Archive failed; it will be retried the next time this session is archived."
       fi
-      printf "%s\n" "$_state" > "$2.$$" && mv -f "$2.$$" "$2"
-      rm -f "$3"
-    ' workspace-claude-archive "$WORKSPACE_LIB" "$_claude_archived_marker" \
-      "$_claude_archiving_marker" >> "$_claude_log" 2>&1 &
+      rm -f "$4"
+    ' workspace-claude-archive "$WORKSPACE_LIB" "$_claude_branch_marker" \
+      "$_claude_archived_marker" "$_claude_archiving_marker" \
+      "$_claude_bootstrapping_marker" >> "$_claude_log" 2>&1 &
     _claude_job=$!
     # Return only once the job is visible to a session start that follows.
     while [ ! -s "$_claude_archiving_marker" ] && kill -0 "$_claude_job" 2>/dev/null; do
