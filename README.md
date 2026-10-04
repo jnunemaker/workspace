@@ -187,7 +187,9 @@ A session that starts or resumes detached — in a Codex worktree, or after an
 unarchive that could not reattach its branch — is never archived
 automatically, because quitting and archiving look identical for it.
 Leaving its databases behind is safer than dropping them; run
-`bin/workspace archive` in that worktree when you are done with it.
+`bin/workspace archive` in that worktree when you are done with it. Archive
+unregisters the worktree, so if you resume it later the SessionStart hook sets
+it up again.
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs

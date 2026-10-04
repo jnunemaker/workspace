@@ -20,7 +20,7 @@
 #
 # State lives in the worktree's private Git directory:
 #   workspace-claude-branch         branch the current session started on
-#   workspace-claude-bootstrapping  PID of a session-start still setting up
+#   workspace-claude-bootstrapping  PID of a bootstrap still setting up
 #   workspace-claude-archiving      PID of a background archive still running
 #   workspace-claude-archived       teardown ran; next start must fully bootstrap
 #   workspace-claude.log            background archive output
@@ -81,7 +81,7 @@ _claude_marker_live() {
   [ -f "$_claude_marker" ] || return 1
   _claude_marker_pid=$(cat "$_claude_marker" 2>/dev/null || true)
   if [ -n "$_claude_marker_pid" ]; then
-    case "$(ps -p "$_claude_marker_pid" -o command= 2>/dev/null || true)" in
+    case "$(ps -ww -p "$_claude_marker_pid" -o command= 2>/dev/null || true)" in
       *"$_claude_marker_command"*) return 0 ;;
     esac
   fi
@@ -114,20 +114,37 @@ case "$_claude_event" in
     fi
 
     # Archiving during setup waits for this marker, so the archive cannot
-    # drop databases that setup is still creating.
-    printf '%s\n' "$$" > "$_claude_bootstrapping_marker.$$"
-    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
-    trap 'rm -f "$_claude_bootstrapping_marker"' EXIT
-
+    # drop databases that setup is still creating. It names the bootstrap
+    # process itself, so if Claude Code stops this hook mid-setup, the archive
+    # still waits for the setup that keeps running. The marker is removed only
+    # while it still names this bootstrap and that bootstrap has finished, so
+    # an overlapping session start keeps its own marker.
     # Bootstrap output belongs in the hook log, not Claude's context.
     # An unarchived worktree still has its .workspace marker but no databases,
     # so --once would skip it. Keep the archived marker until setup succeeds.
     if [ -f "$_claude_archived_marker" ]; then
-      sh "$WORKSPACE_LIB/bootstrap.sh" >&2
-      rm -f "$_claude_archived_marker"
+      _claude_full_bootstrap=true
+      set --
     else
-      sh "$WORKSPACE_LIB/bootstrap.sh" --once >&2
+      _claude_full_bootstrap=false
+      set -- --once
     fi
+    sh "$WORKSPACE_LIB/bootstrap.sh" "$@" >&2 &
+    _claude_bootstrap=$!
+    printf '%s\n' "$_claude_bootstrap" > "$_claude_bootstrapping_marker.$$"
+    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
+    _claude_release_bootstrap() {
+      if [ "$(cat "$_claude_bootstrapping_marker" 2>/dev/null || true)" = "$_claude_bootstrap" ] && \
+        ! kill -0 "$_claude_bootstrap" 2>/dev/null; then
+        rm -f "$_claude_bootstrapping_marker"
+      fi
+    }
+    trap '_claude_release_bootstrap' EXIT
+
+    if ! wait "$_claude_bootstrap"; then
+      exit 1
+    fi
+    [ "$_claude_full_bootstrap" = false ] || rm -f "$_claude_archived_marker"
     exit 0
     ;;
   session-end)
@@ -145,7 +162,9 @@ case "$_claude_event" in
     # never see a partial file) before working. macOS has no setsid command,
     # but ships Perl.
     #
-    # The job first waits for a session start still setting up, then marks
+    # The job first waits for a bootstrap still setting up (matched by its
+    # expanded path, which never appears in the job's own command line), then
+    # marks
     # the worktree for a full bootstrap before tearing down, since teardown
     # may stop partway. The session branch is forgotten only after a complete
     # archive, so a failed one is attempted again on the next archive.
@@ -160,9 +179,9 @@ case "$_claude_event" in
       printf "%s\n" "$$" > "$4.$$" && mv -f "$4.$$" "$4"
       while [ -f "$5" ]; do
         _pid=$(cat "$5" 2>/dev/null || true)
-        case "$(ps -p "${_pid:-0}" -o command= 2>/dev/null || true)" in
-          *"claude_hook.sh session-start"*) sleep 1 ;;
-          *) rm -f "$5" ;;
+        case "$(ps -ww -p "${_pid:-0}" -o command= 2>/dev/null || true)" in
+          *"$1/bootstrap.sh"*) sleep 1 ;;
+          *) [ "$(cat "$5" 2>/dev/null || true)" != "$_pid" ] || rm -f "$5" ;;
         esac
       done
       printf "=== archive %s\n" "$(date)"

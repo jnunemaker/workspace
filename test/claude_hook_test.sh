@@ -232,4 +232,61 @@ codex_git_dir=$(git -C "$codex_worktree" rev-parse --absolute-git-dir)
 assert_false "detached-at-start worktree has no session branch" [ -f "$codex_git_dir/workspace-claude-branch" ]
 assert_equal "detached-at-start worktree is not archived" "6" "$(count_log archive)"
 
+# A worktree archived by hand (no hook teardown record) is unregistered, so
+# the next session start sets it up again instead of skipping it.
+setups_before=$(count_log setup)
+(cd "$hook_worktree" && PATH="$fake_bin:$PATH" WORKSPACE_TEST_LOG="$hook_log" \
+  sh "$WORKSPACE_HOME/lib/archive.sh") >/dev/null 2>&1
+run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
+assert_equal "session-start sets up a worktree archived by hand" "$((setups_before + 1))" "$(count_log setup)"
+
+# A stale setup marker naming an unrelated process does not hold up archive,
+# even when that process's command line mentions the session-start hook.
+sh -c 'sleep 30' "claude_hook.sh session-start" &
+impostor_pid=$!
+printf '%s\n' "$impostor_pid" > "$worktree_git_dir/workspace-claude-bootstrapping"
+archives_before=$(count_log archive)
+git -C "$hook_worktree" checkout -q --detach
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait_for_archive
+assert_equal "archive ignores a setup marker naming another process" "$((archives_before + 1))" "$(count_log archive)"
+kill "$impostor_pid" 2>/dev/null || true
+wait "$impostor_pid" 2>/dev/null || true
+
+# If Claude Code stops the session-start hook mid-setup, the setup keeps
+# running and the archive still waits for it.
+git -C "$hook_worktree" checkout -q claude/feature
+(export WORKSPACE_TEST_SETUP_SLEEP=3; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
+killed_start=$!
+killed_wait=0
+while [ ! -s "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$killed_wait" -lt 50 ]; do
+  sleep 0.1
+  killed_wait=$((killed_wait + 1))
+done
+setup_pid=$(cat "$worktree_git_dir/workspace-claude-bootstrapping")
+hook_pid=$(ps -o ppid= -p "$setup_pid" | tr -d ' ')
+kill -TERM "$hook_pid" 2>/dev/null || true
+sleep 0.3
+assert_true "killed hook leaves the running setup's marker" [ -f "$worktree_git_dir/workspace-claude-bootstrapping" ]
+git -C "$hook_worktree" checkout -q --detach
+run_hook session-end "$hook_worktree" >/dev/null 2>&1
+wait "$killed_start" 2>/dev/null || true
+wait_for_archive
+assert_equal "archive waits for setup orphaned by a killed hook" "setup archive" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
+
+# An overlapping session start replaced the setup marker; finishing setup
+# must not remove the other session's marker.
+git -C "$hook_worktree" checkout -q claude/feature
+(export WORKSPACE_TEST_SETUP_SLEEP=2; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
+overlap_start=$!
+overlap_wait=0
+while [ ! -s "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$overlap_wait" -lt 50 ]; do
+  sleep 0.1
+  overlap_wait=$((overlap_wait + 1))
+done
+printf '424242\n' > "$worktree_git_dir/workspace-claude-bootstrapping"
+wait "$overlap_start" 2>/dev/null || true
+assert_equal "finished setup keeps another session's marker" "424242" "$(cat "$worktree_git_dir/workspace-claude-bootstrapping" 2>/dev/null)"
+rm -f "$worktree_git_dir/workspace-claude-bootstrapping"
+
 report "claude-hook"
