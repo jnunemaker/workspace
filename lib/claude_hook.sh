@@ -129,22 +129,33 @@ case "$_claude_event" in
       _claude_full_bootstrap=false
       set -- --once
     fi
+    _claude_bootstrap=""
+    _claude_release_bootstrap() {
+      # Setup still running (this hook was stopped): leave its marker.
+      if [ -n "$_claude_bootstrap" ] && kill -0 "$_claude_bootstrap" 2>/dev/null; then
+        return 0
+      fi
+      case "$(cat "$_claude_bootstrapping_marker" 2>/dev/null || true)" in
+        "$$"|"${_claude_bootstrap:-$$}") rm -f "$_claude_bootstrapping_marker" ;;
+      esac
+    }
+    trap '_claude_release_bootstrap' EXIT
+    # Claim the marker with this hook's PID before setup starts, so no archive
+    # sees setup running unmarked, then hand it to the bootstrap process.
+    printf '%s\n' "$$" > "$_claude_bootstrapping_marker.$$"
+    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
     sh "$WORKSPACE_LIB/bootstrap.sh" "$@" >&2 &
     _claude_bootstrap=$!
     printf '%s\n' "$_claude_bootstrap" > "$_claude_bootstrapping_marker.$$"
     mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
-    _claude_release_bootstrap() {
-      if [ "$(cat "$_claude_bootstrapping_marker" 2>/dev/null || true)" = "$_claude_bootstrap" ] && \
-        ! kill -0 "$_claude_bootstrap" 2>/dev/null; then
-        rm -f "$_claude_bootstrapping_marker"
-      fi
-    }
-    trap '_claude_release_bootstrap' EXIT
 
     if ! wait "$_claude_bootstrap"; then
       exit 1
     fi
-    [ "$_claude_full_bootstrap" = false ] || rm -f "$_claude_archived_marker"
+    # An archive that started while setup ran owns the teardown record now.
+    if [ "$_claude_full_bootstrap" = true ] && ! _claude_archive_running; then
+      rm -f "$_claude_archived_marker"
+    fi
     exit 0
     ;;
   session-end)
@@ -162,8 +173,9 @@ case "$_claude_event" in
     # never see a partial file) before working. macOS has no setsid command,
     # but ships Perl.
     #
-    # The job first waits for a bootstrap still setting up (matched by its
-    # expanded path, which never appears in the job's own command line), then
+    # The job first waits for a bootstrap still setting up, or a session start
+    # about to launch one (matched by expanded paths, which never appear in the
+    # job's own command line), then
     # marks
     # the worktree for a full bootstrap before tearing down, since teardown
     # may stop partway. The session branch is forgotten only after a complete
@@ -180,7 +192,7 @@ case "$_claude_event" in
       while [ -f "$5" ]; do
         _pid=$(cat "$5" 2>/dev/null || true)
         case "$(ps -ww -p "${_pid:-0}" -o command= 2>/dev/null || true)" in
-          *"$1/bootstrap.sh"*) sleep 1 ;;
+          *"$1/bootstrap.sh"*|*"$1/claude_hook.sh session-start"*) sleep 1 ;;
           *) [ "$(cat "$5" 2>/dev/null || true)" != "$_pid" ] || rm -f "$5" ;;
         esac
       done
