@@ -705,17 +705,13 @@ assert_false "invalid identity is rejected before setup" [ -f .setup-called ]
 once_root="$TEST_TMP/once-root"
 once_worktree="$TEST_TMP/once-worktree"
 mkdir -p "$once_root/bin"
-git -C "$once_root" init -q
-git -C "$once_root" config user.email "workspace-tests@example.com"
-git -C "$once_root" config user.name "Workspace Tests"
 cat > "$once_root/bin/setup" <<'SCRIPT'
 #!/bin/sh
 printf 'setup\n' >> "$WORKSPACE_TEST_LOG"
 SCRIPT
 chmod +x "$once_root/bin/setup"
 printf '.workspace\n' > "$once_root/.gitignore"
-git -C "$once_root" add .gitignore bin/setup
-git -C "$once_root" commit -qm "initial"
+commit_git_repo "$once_root"
 git -C "$once_root" worktree add -q --detach "$once_worktree"
 once_log="$TEST_TMP/once.log"
 

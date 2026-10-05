@@ -56,42 +56,42 @@ cd "$_claude_cwd"
 
 # The session may have moved into a subdirectory; lifecycle commands run from
 # the worktree root.
-_claude_top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+_claude_paths=$(git rev-parse --show-toplevel --absolute-git-dir 2>/dev/null) || exit 0
+{ read -r _claude_top; read -r _claude_git_dir; } <<EOF
+$_claude_paths
+EOF
 cd "$_claude_top"
 
-# Only unmanaged linked Git worktrees. The original checkout keeps its own
-# lifecycle, and Conductor-family managers run their own setup and archive.
+# Only unmanaged linked Git worktrees of projects set up with workspace init.
+# The original checkout keeps its own lifecycle, and Conductor-family managers
+# run their own setup and archive.
 resolve_workspace
 [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
 [ -x bin/workspace ] || exit 0
 
-_claude_git_dir=$(git rev-parse --absolute-git-dir)
 _claude_branch_marker="$_claude_git_dir/workspace-claude-branch"
 _claude_bootstrapping_marker="$_claude_git_dir/workspace-claude-bootstrapping"
 _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"
 _claude_archived_marker="$_claude_git_dir/workspace-claude-archived"
 _claude_log="$_claude_git_dir/workspace-claude.log"
 
-# A PID left in a marker by a killed hook or job (reboot, force quit) is only
-# trusted while it still belongs to that hook or job, not a reused process ID.
-# Prints nothing; returns 0 while the process named in the marker is alive.
-_claude_marker_live() {
-  _claude_marker="$1"
-  _claude_marker_command="$2"
-  [ -f "$_claude_marker" ] || return 1
-  _claude_marker_pid=$(cat "$_claude_marker" 2>/dev/null || true)
-  if [ -n "$_claude_marker_pid" ]; then
-    case "$(ps -ww -p "$_claude_marker_pid" -o command= 2>/dev/null || true)" in
-      *"$_claude_marker_command"*) return 0 ;;
-    esac
-  fi
-  rm -f "$_claude_marker"
-  return 1
+# Publish a PID marker by rename, so readers never see a partial file.
+_claude_write_pid() {
+  printf '%s\n' "$2" > "$1.$$" && mv -f "$1.$$" "$1" || { rm -f "$1.$$"; return 1; }
 }
 
-# The background archive runs as `sh -c ... workspace-claude-archive`.
+# The background archive runs as `sh -c ... workspace-claude-archive`. A PID
+# left by a killed archive (reboot, force quit) is trusted only while it still
+# belongs to an archive job, not a reused process ID; otherwise the stale
+# marker is removed. The job's own wait loop below follows the same rule.
 _claude_archive_running() {
-  _claude_marker_live "$_claude_archiving_marker" workspace-claude-archive
+  [ -f "$_claude_archiving_marker" ] || return 1
+  _claude_archive_pid=$(cat "$_claude_archiving_marker" 2>/dev/null || true)
+  case "$(ps -ww -p "${_claude_archive_pid:-0}" -o command= 2>/dev/null || true)" in
+    *workspace-claude-archive*) return 0 ;;
+  esac
+  rm -f "$_claude_archiving_marker"
+  return 1
 }
 
 case "$_claude_event" in
@@ -102,7 +102,7 @@ case "$_claude_event" in
     # separate limit: if the hook's own timeout stops this wait, nothing has
     # been recorded yet and the next session start tries again.
     while _claude_archive_running; do
-      sleep 1
+      sleep 0.2
     done
 
     # Only a session that starts on a branch can later be recognized as
@@ -113,25 +113,20 @@ case "$_claude_event" in
       rm -f "$_claude_branch_marker"
     fi
 
-    # Archiving during setup waits for this marker, so the archive cannot
-    # drop databases that setup is still creating. It names the bootstrap
-    # process itself, so if Claude Code stops this hook mid-setup, the archive
-    # still waits for the setup that keeps running. The marker is removed only
-    # while it still names this bootstrap and that bootstrap has finished, so
-    # an overlapping session start keeps its own marker.
-    # Bootstrap output belongs in the hook log, not Claude's context.
-    # An unarchived worktree still has its .workspace marker but no databases,
-    # so --once would skip it. Keep the archived marker until setup succeeds.
-    if [ -f "$_claude_archived_marker" ]; then
-      _claude_full_bootstrap=true
-      set --
-    else
-      _claude_full_bootstrap=false
-      set -- --once
-    fi
+    # An unarchived worktree may still look set up to --once, so after a hook
+    # archive run a full bootstrap. The archived marker stays until it succeeds.
+    _claude_once=--once
+    [ ! -f "$_claude_archived_marker" ] || _claude_once=
+
+    # Archiving during setup waits for the bootstrapping marker, so it cannot
+    # drop databases that setup is still creating. The marker is claimed with
+    # this hook's PID before setup starts, then handed to the bootstrap process
+    # itself, so if Claude Code stops this hook mid-setup the archive still
+    # waits for the setup that keeps running. It is removed only while it still
+    # names this hook or its finished bootstrap, so an overlapping session
+    # start keeps its own marker.
     _claude_bootstrap=""
     _claude_release_bootstrap() {
-      # Setup still running (this hook was stopped): leave its marker.
       if [ -n "$_claude_bootstrap" ] && kill -0 "$_claude_bootstrap" 2>/dev/null; then
         return 0
       fi
@@ -140,20 +135,15 @@ case "$_claude_event" in
       esac
     }
     trap '_claude_release_bootstrap' EXIT
-    # Claim the marker with this hook's PID before setup starts, so no archive
-    # sees setup running unmarked, then hand it to the bootstrap process.
-    printf '%s\n' "$$" > "$_claude_bootstrapping_marker.$$"
-    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
-    sh "$WORKSPACE_LIB/bootstrap.sh" "$@" >&2 &
+    _claude_write_pid "$_claude_bootstrapping_marker" "$$"
+    # Bootstrap output goes to stderr so it stays out of Claude's context.
+    sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once >&2 &
     _claude_bootstrap=$!
-    printf '%s\n' "$_claude_bootstrap" > "$_claude_bootstrapping_marker.$$"
-    mv -f "$_claude_bootstrapping_marker.$$" "$_claude_bootstrapping_marker"
+    _claude_write_pid "$_claude_bootstrapping_marker" "$_claude_bootstrap"
 
-    if ! wait "$_claude_bootstrap"; then
-      exit 1
-    fi
+    wait "$_claude_bootstrap" || exit 1
     # An archive that started while setup ran owns the teardown record now.
-    if [ "$_claude_full_bootstrap" = true ] && ! _claude_archive_running; then
+    if [ -z "$_claude_once" ] && ! _claude_archive_running; then
       rm -f "$_claude_archived_marker"
     fi
     exit 0
@@ -169,17 +159,15 @@ case "$_claude_event" in
 
     # SessionEnd hooks get at most 60 seconds; archive may need longer. The
     # job runs in its own session so it survives Claude Code stopping the
-    # hook's process group, and records its own PID (via rename, so readers
-    # never see a partial file) before working. macOS has no setsid command,
-    # but ships Perl.
+    # hook's process group (macOS has no setsid command, but ships Perl), and
+    # publishes its own PID before working.
     #
     # The job first waits for a bootstrap still setting up, or a session start
-    # about to launch one (matched by expanded paths, which never appear in the
-    # job's own command line), then
-    # marks
-    # the worktree for a full bootstrap before tearing down, since teardown
-    # may stop partway. The session branch is forgotten only after a complete
-    # archive, so a failed one is attempted again on the next archive.
+    # about to launch one; they are matched by expanded paths, which never
+    # appear in the job's own command line. It then marks the worktree for a
+    # full bootstrap, since teardown may stop partway. The session branch is
+    # forgotten only after a complete archive, so a failed one is attempted
+    # again on the next archive.
     if command -v setsid >/dev/null 2>&1; then
       set -- setsid
     elif command -v perl >/dev/null 2>&1; then
@@ -192,7 +180,7 @@ case "$_claude_event" in
       while [ -f "$5" ]; do
         _pid=$(cat "$5" 2>/dev/null || true)
         case "$(ps -ww -p "${_pid:-0}" -o command= 2>/dev/null || true)" in
-          *"$1/bootstrap.sh"*|*"$1/claude_hook.sh session-start"*) sleep 1 ;;
+          *"$1/bootstrap.sh"*|*"$1/claude_hook.sh session-start"*) sleep 0.2 ;;
           *) [ "$(cat "$5" 2>/dev/null || true)" != "$_pid" ] || rm -f "$5" ;;
         esac
       done

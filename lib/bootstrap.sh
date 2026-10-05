@@ -51,19 +51,13 @@ _bootstrap_once=false
 
 resolve_workspace
 
-# Session hooks fire for every agent session, including the original checkout,
-# resumed worktrees, and checkouts whose manager already runs setup. Only an
-# unmanaged linked worktree needs work, and only until it has both its identity
-# marker and its registration. Archive unregisters, so a worktree torn down by
-# hand is set up again on the next session start.
-if [ "$_bootstrap_once" = true ]; then
-  [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
-fi
+# --once (agent session hooks): only an unmanaged linked worktree missing its
+# identity marker or registration needs setup. Archive unregisters, so a
+# worktree torn down by hand is set up again.
+[ "$_bootstrap_once" != true ] || [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
 sanitize_workspace_name
 resolve_workspace_identity
-if [ "$_bootstrap_once" = true ] && [ -e .workspace ] && \
-  _once_registry_entry=$(workspace_registry_entry 2>/dev/null) && \
-  [ -f "$_once_registry_entry" ]; then
+if [ "$_bootstrap_once" = true ] && [ -e .workspace ] && workspace_is_registered 2>/dev/null; then
   exit 0
 fi
 detect_app_name

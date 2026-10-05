@@ -35,13 +35,9 @@ printf 'archive\n' >> "$WORKSPACE_TEST_LOG"
 EOF
 chmod +x "$hook_root/bin/workspace" "$hook_root/bin/setup" "$hook_root/bin/workspace-archive-hook"
 printf '.workspace\n' > "$hook_root/.gitignore"
-git -C "$hook_root" init -q -b main
-git -C "$hook_root" config user.email "workspace-tests@example.com"
-git -C "$hook_root" config user.name "Workspace Tests"
 mkdir -p "$hook_root/app"
 printf 'app\n' > "$hook_root/app/README"
-git -C "$hook_root" add .gitignore bin app
-git -C "$hook_root" commit -qm "initial"
+commit_git_repo "$hook_root"
 git -C "$hook_root" worktree add -q -b claude/feature "$hook_worktree"
 git -C "$hook_root" worktree add -q --detach "$codex_worktree"
 hook_root=$(cd "$hook_root" && pwd -P)
@@ -60,12 +56,18 @@ count_log() {
   { cat "$hook_log" 2>/dev/null || true; } | grep -c "^$1\$" || true
 }
 
+# session-end returns only after any archive it started is visible, so this
+# also confirms that no archive started.
 wait_for_archive() {
-  _wait=0
-  while [ -e "$worktree_git_dir/workspace-claude-archiving" ] && [ "$_wait" -lt 50 ]; do
-    sleep 0.2
-    _wait=$((_wait + 1))
-  done
+  wait_until [ ! -e "$worktree_git_dir/workspace-claude-archiving" ]
+}
+
+wait_for_setup_marker() {
+  wait_until [ -s "$worktree_git_dir/workspace-claude-bootstrapping" ]
+}
+
+last_two_log() {
+  tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//'
 }
 
 assert_true "claude-hook without event shows usage and fails" sh -c '! sh "$1/lib/claude_hook.sh" </dev/null >/dev/null 2>&1' sh "$WORKSPACE_HOME"
@@ -91,13 +93,13 @@ assert_equal "session-start ignores a missing cwd" "0" "$?"
 # ── session-end ──────────────────────────────────────────────────
 
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "session-end leaves an attached branch alone (app quit)" "0" "$(count_log archive)"
 
 git -C "$hook_worktree" checkout -q --detach
 mkdir "$worktree_git_dir/rebase-merge"
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "session-end ignores a rebase in progress" "0" "$(count_log archive)"
 rmdir "$worktree_git_dir/rebase-merge"
 
@@ -111,7 +113,7 @@ assert_false "session-end clears the running archive record" [ -f "$worktree_git
 assert_true "session-end logs archive output" grep -q 'Archive complete' "$worktree_git_dir/workspace-claude.log"
 
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "session-end archives only once" "1" "$(count_log archive)"
 
 # Unarchive reattaches the branch and resumes; databases must come back even
@@ -150,7 +152,7 @@ git -C "$hook_worktree" checkout -q --detach
 (export WORKSPACE_TEST_ARCHIVE_SLEEP=2; run_hook session-end "$hook_worktree") >/dev/null 2>&1
 git -C "$hook_worktree" checkout -q claude/feature
 run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
-assert_equal "racing session-start waits for archive" "archive setup" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
+assert_equal "racing session-start waits for archive" "archive setup" "$(last_two_log)"
 assert_false "racing session-start leaves no teardown record" [ -f "$worktree_git_dir/workspace-claude-archived" ]
 
 # Archiving while session start is still setting up waits for setup, so the
@@ -162,16 +164,12 @@ assert_equal "archive before setup race" "5" "$(count_log archive)"
 git -C "$hook_worktree" checkout -q claude/feature
 (export WORKSPACE_TEST_SETUP_SLEEP=2; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
 setup_race_start=$!
-setup_race_wait=0
-while [ ! -f "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$setup_race_wait" -lt 50 ]; do
-  sleep 0.1
-  setup_race_wait=$((setup_race_wait + 1))
-done
+wait_for_setup_marker
 git -C "$hook_worktree" checkout -q --detach
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
 wait "$setup_race_start" 2>/dev/null || true
 wait_for_archive
-assert_equal "archive during setup waits for setup" "setup archive" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
+assert_equal "archive during setup waits for setup" "setup archive" "$(last_two_log)"
 assert_true "archive after setup marks the teardown" [ -f "$worktree_git_dir/workspace-claude-archived" ]
 assert_false "archive after setup forgets the session branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 
@@ -183,11 +181,7 @@ reused_pid=$!
 printf '%s\n' "$reused_pid" > "$worktree_git_dir/workspace-claude-archiving"
 run_hook session-start "$hook_worktree" resume >/dev/null 2>&1 &
 reuse_start=$!
-reuse_wait=0
-while kill -0 "$reuse_start" 2>/dev/null && [ "$reuse_wait" -lt 50 ]; do
-  sleep 0.2
-  reuse_wait=$((reuse_wait + 1))
-done
+wait_until sh -c '! kill -0 "$1" 2>/dev/null' sh "$reuse_start" || true
 assert_false "session-start ignores a reused archive PID" sh -c 'kill -0 "$1" 2>/dev/null' sh "$reuse_start"
 kill "$reuse_start" "$reused_pid" 2>/dev/null || true
 wait "$reuse_start" "$reused_pid" 2>/dev/null || true
@@ -200,7 +194,7 @@ git -C "$hook_worktree" checkout -q --detach
 run_hook session-start "$hook_worktree" >/dev/null 2>&1
 assert_false "detached session-start clears a stale branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "stale branch does not trigger archive" "6" "$(count_log archive)"
 
 # Quitting looks exactly like archiving for a session that resumed detached,
@@ -211,7 +205,7 @@ git -C "$hook_worktree" checkout -q --detach
 run_hook session-start "$hook_worktree" resume >/dev/null 2>&1
 assert_false "detached resume owns no branch" [ -f "$worktree_git_dir/workspace-claude-branch" ]
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "detached resumed session is not archived" "6" "$(count_log archive)"
 
 # Conductor-family managers own setup and archive for their worktrees.
@@ -220,14 +214,14 @@ run_hook session-start "$hook_worktree" >/dev/null 2>&1
 git -C "$hook_worktree" checkout -q --detach
 (export CONDUCTOR_ROOT_PATH="$hook_root" CONDUCTOR_WORKSPACE_NAME="managed"
   run_hook session-end "$hook_worktree") >/dev/null 2>&1
-sleep 1
+wait_for_archive
 assert_equal "session-end leaves managed workspaces alone" "6" "$(count_log archive)"
 git -C "$hook_worktree" checkout -q claude/feature
 
 # Worktrees that start detached (Codex) are never archived by Claude hooks.
 run_hook session-start "$codex_worktree" >/dev/null 2>&1
 run_hook session-end "$codex_worktree" >/dev/null 2>&1
-sleep 1
+wait_for_archive
 codex_git_dir=$(git -C "$codex_worktree" rev-parse --absolute-git-dir)
 assert_false "detached-at-start worktree has no session branch" [ -f "$codex_git_dir/workspace-claude-branch" ]
 assert_equal "detached-at-start worktree is not archived" "6" "$(count_log archive)"
@@ -258,11 +252,7 @@ wait "$impostor_pid" 2>/dev/null || true
 git -C "$hook_worktree" checkout -q claude/feature
 (export WORKSPACE_TEST_SETUP_SLEEP=3; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
 killed_start=$!
-killed_wait=0
-while [ ! -s "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$killed_wait" -lt 50 ]; do
-  sleep 0.1
-  killed_wait=$((killed_wait + 1))
-done
+wait_for_setup_marker
 setup_pid=$(cat "$worktree_git_dir/workspace-claude-bootstrapping")
 hook_pid=$(ps -o ppid= -p "$setup_pid" | tr -d ' ')
 kill -TERM "$hook_pid" 2>/dev/null || true
@@ -272,18 +262,14 @@ git -C "$hook_worktree" checkout -q --detach
 run_hook session-end "$hook_worktree" >/dev/null 2>&1
 wait "$killed_start" 2>/dev/null || true
 wait_for_archive
-assert_equal "archive waits for setup orphaned by a killed hook" "setup archive" "$(tail -2 "$hook_log" | tr '\n' ' ' | sed 's/ $//')"
+assert_equal "archive waits for setup orphaned by a killed hook" "setup archive" "$(last_two_log)"
 
 # An overlapping session start replaced the setup marker; finishing setup
 # must not remove the other session's marker.
 git -C "$hook_worktree" checkout -q claude/feature
 (export WORKSPACE_TEST_SETUP_SLEEP=2; run_hook session-start "$hook_worktree" resume) >/dev/null 2>&1 &
 overlap_start=$!
-overlap_wait=0
-while [ ! -s "$worktree_git_dir/workspace-claude-bootstrapping" ] && [ "$overlap_wait" -lt 50 ]; do
-  sleep 0.1
-  overlap_wait=$((overlap_wait + 1))
-done
+wait_for_setup_marker
 printf '424242\n' > "$worktree_git_dir/workspace-claude-bootstrapping"
 wait "$overlap_start" 2>/dev/null || true
 assert_equal "finished setup keeps another session's marker" "424242" "$(cat "$worktree_git_dir/workspace-claude-bootstrapping" 2>/dev/null)"

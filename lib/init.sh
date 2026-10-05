@@ -573,64 +573,47 @@ fi
 # Existing settings are merged: other keys and hooks are preserved, and a
 # Workspace hook is only added when no hook already runs that command.
 
-_ensure_claude_settings() {
-  _claude_settings="$1"
-  _claude_directory=$(dirname -- "$_claude_settings")
-  mkdir -p "$_claude_directory"
-  _claude_temporary=$(mktemp "$_claude_directory/.workspace-init.XXXXXX") || return 1
-
-  if ! ruby -rjson -e '
+# Print .claude/settings.json with the Workspace hooks merged in, reading the
+# existing file when present. Fails, printing nothing, on unparseable input.
+_claude_settings_json() {
+  ruby -rjson -e '
     path = ARGV.fetch(0)
     settings = File.exist?(path) ? JSON.parse(File.read(path)) : {}
     raise "settings must be an object" unless Hash === settings
     hooks = settings["hooks"] ||= {}
     raise "hooks must be an object" unless Hash === hooks
 
-    wanted = {
-      "SessionStart" => {
-        "pattern" => /workspace claude-hook session-start\b/,
-        "group" => {
-          "matcher" => "startup|resume|fork",
-          "hooks" => [{
-            "type" => "command",
-            "command" => "\"$CLAUDE_PROJECT_DIR\"/bin/workspace claude-hook session-start",
-            "timeout" => 1800,
-            "statusMessage" => "Bootstrapping workspace"
-          }]
-        }
-      },
-      "SessionEnd" => {
-        "pattern" => /workspace claude-hook session-end\b/,
-        "group" => {
-          "matcher" => "other",
-          "hooks" => [{
-            "type" => "command",
-            "command" => "\"$CLAUDE_PROJECT_DIR\"/bin/workspace claude-hook session-end",
-            "timeout" => 5,
-            "statusMessage" => "Checking workspace archive"
-          }]
-        }
-      }
-    }
-
-    wanted.each do |event, spec|
+    {
+      "SessionStart" => ["session-start", "startup|resume|fork", 1800, "Bootstrapping workspace"],
+      "SessionEnd" => ["session-end", "other", 5, "Checking workspace archive"]
+    }.each do |event, (name, matcher, timeout, status)|
       groups = hooks[event] ||= []
       raise "#{event} must be an array" unless Array === groups
       present = groups.any? do |group|
         Hash === group && Array === group["hooks"] && group["hooks"].any? do |hook|
-          Hash === hook && String === hook["command"] && hook["command"] =~ spec["pattern"]
+          Hash === hook && String === hook["command"] && hook["command"] =~ /workspace claude-hook #{name}\b/
         end
       end
-      groups << spec["group"] unless present
+      next if present
+
+      groups << {
+        "matcher" => matcher,
+        "hooks" => [{
+          "type" => "command",
+          "command" => %q{"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook } + name,
+          "timeout" => timeout,
+          "statusMessage" => status
+        }]
+      }
     end
 
     print JSON.pretty_generate(settings) + "\n"
-  ' "$_claude_settings" > "$_claude_temporary" 2>/dev/null; then
-    rm -f "$_claude_temporary"
-    return 1
-  fi
+  ' "$1" 2>/dev/null
+}
 
-  _finish_atomic_write "$_claude_temporary" "$_claude_settings" 644
+_ensure_claude_settings() {
+  _claude_settings_output=$(_claude_settings_json "$1") || return 1
+  printf '%s\n' "$_claude_settings_output" | _atomic_write "$1" 644
 }
 
 if _linked_provider_config .claude/settings.json; then
@@ -638,7 +621,6 @@ if _linked_provider_config .claude/settings.json; then
 elif ! command -v ruby >/dev/null 2>&1; then
   warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
 elif [ -f .claude/settings.json ]; then
-  _use_project_workspace_entrypoint .claude/settings.json
   if _ensure_claude_settings .claude/settings.json; then
     step ".claude/settings.json already exists (Workspace hooks ensured)"
   else
@@ -648,7 +630,6 @@ elif [ -f .claude/settings.json ]; then
 elif _ensure_claude_settings .claude/settings.json; then
   ok "Created .claude/settings.json"
 else
-  rmdir .claude 2>/dev/null || true
   warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
 fi
 
