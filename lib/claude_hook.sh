@@ -105,6 +105,25 @@ case "$_claude_event" in
       sleep 0.2
     done
 
+    # Archiving during setup waits for the bootstrapping marker, so it cannot
+    # drop databases that setup is still creating. The marker is claimed with
+    # this hook's PID before the session branch is recorded and setup starts,
+    # then handed to the bootstrap process itself, so if Claude Code stops this
+    # hook mid-setup the archive still waits for the setup that keeps running.
+    # It is removed only while it still names this hook or its finished
+    # bootstrap, so an overlapping session start keeps its own marker.
+    _claude_bootstrap=""
+    _claude_release_bootstrap() {
+      if [ -n "$_claude_bootstrap" ] && kill -0 "$_claude_bootstrap" 2>/dev/null; then
+        return 0
+      fi
+      case "$(cat "$_claude_bootstrapping_marker" 2>/dev/null || true)" in
+        "$$"|"${_claude_bootstrap:-$$}") rm -f "$_claude_bootstrapping_marker" ;;
+      esac
+    }
+    trap '_claude_release_bootstrap' EXIT
+    _claude_write_pid "$_claude_bootstrapping_marker" "$$"
+
     # Only a session that starts on a branch can later be recognized as
     # archived, even if an earlier session owned one.
     if _claude_branch=$(git symbolic-ref -q --short HEAD); then
@@ -118,24 +137,6 @@ case "$_claude_event" in
     _claude_once=--once
     [ ! -f "$_claude_archived_marker" ] || _claude_once=
 
-    # Archiving during setup waits for the bootstrapping marker, so it cannot
-    # drop databases that setup is still creating. The marker is claimed with
-    # this hook's PID before setup starts, then handed to the bootstrap process
-    # itself, so if Claude Code stops this hook mid-setup the archive still
-    # waits for the setup that keeps running. It is removed only while it still
-    # names this hook or its finished bootstrap, so an overlapping session
-    # start keeps its own marker.
-    _claude_bootstrap=""
-    _claude_release_bootstrap() {
-      if [ -n "$_claude_bootstrap" ] && kill -0 "$_claude_bootstrap" 2>/dev/null; then
-        return 0
-      fi
-      case "$(cat "$_claude_bootstrapping_marker" 2>/dev/null || true)" in
-        "$$"|"${_claude_bootstrap:-$$}") rm -f "$_claude_bootstrapping_marker" ;;
-      esac
-    }
-    trap '_claude_release_bootstrap' EXIT
-    _claude_write_pid "$_claude_bootstrapping_marker" "$$"
     # Bootstrap output goes to stderr so it stays out of Claude's context.
     sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once >&2 &
     _claude_bootstrap=$!
