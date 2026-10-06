@@ -563,6 +563,76 @@ EOF
   ok "Created .codex/hooks.json"
 fi
 
+# ── Create Claude Code session hooks ────────────────────────────
+#
+# Claude Code (desktop worktree sessions included) has no native setup or
+# cleanup script, so lifecycle rides on session hooks. Hooks run from the
+# original checkout, so they call its shim through CLAUDE_PROJECT_DIR and
+# `workspace claude-hook` moves into the session's worktree from the hook
+# JSON. See lib/claude_hook.sh for the archive detection rules.
+# Existing settings are merged: other keys and hooks are preserved, and a
+# Workspace hook is only added when no hook already runs that command.
+
+# Print .claude/settings.json with the Workspace hooks merged in, reading the
+# existing file when present. Fails, printing nothing, on unparseable input.
+_claude_settings_json() {
+  ruby -rjson -e '
+    path = ARGV.fetch(0)
+    settings = File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    raise "settings must be an object" unless Hash === settings
+    hooks = settings["hooks"] ||= {}
+    raise "hooks must be an object" unless Hash === hooks
+
+    {
+      "SessionStart" => ["session-start", "startup|resume|fork", 1800, "Bootstrapping workspace"],
+      "SessionEnd" => ["session-end", "other", 5, "Checking workspace archive"]
+    }.each do |event, (name, matcher, timeout, status)|
+      groups = hooks[event] ||= []
+      raise "#{event} must be an array" unless Array === groups
+      present = groups.any? do |group|
+        Hash === group && Array === group["hooks"] && group["hooks"].any? do |hook|
+          Hash === hook && String === hook["command"] && hook["command"] =~ /workspace claude-hook #{name}\b/
+        end
+      end
+      next if present
+
+      groups << {
+        "matcher" => matcher,
+        "hooks" => [{
+          "type" => "command",
+          "command" => %q{"$CLAUDE_PROJECT_DIR"/bin/workspace claude-hook } + name,
+          "timeout" => timeout,
+          "statusMessage" => status
+        }]
+      }
+    end
+
+    print JSON.pretty_generate(settings) + "\n"
+  ' "$1" 2>/dev/null
+}
+
+_ensure_claude_settings() {
+  _claude_settings_output=$(_claude_settings_json "$1") || return 1
+  printf '%s\n' "$_claude_settings_output" | _atomic_write "$1" 644
+}
+
+if _linked_provider_config .claude/settings.json; then
+  :
+elif ! command -v ruby >/dev/null 2>&1; then
+  warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
+elif [ -f .claude/settings.json ]; then
+  if _ensure_claude_settings .claude/settings.json; then
+    step ".claude/settings.json already exists (Workspace hooks ensured)"
+  else
+    warn "Couldn't parse .claude/settings.json — left it unchanged."
+    warn "Add the SessionStart and SessionEnd hooks from the Workspace README by hand."
+  fi
+elif _ensure_claude_settings .claude/settings.json; then
+  ok "Created .claude/settings.json"
+else
+  warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
+fi
+
 # ── Add .workspace to .gitignore ────────────────────────────────
 
 if [ -f .gitignore ] && grep -qxF '.workspace' .gitignore; then

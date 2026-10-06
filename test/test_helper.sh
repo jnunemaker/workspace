@@ -61,6 +61,25 @@ report() {
   return $FAIL
 }
 
+# Poll until a command succeeds, for up to 10 seconds.
+wait_until() {
+  _wait_until_tries=0
+  until "$@"; do
+    [ "$_wait_until_tries" -lt 100 ] || return 1
+    sleep 0.1
+    _wait_until_tries=$((_wait_until_tries + 1))
+  done
+}
+
+# Initialize a Git repository at $1 and commit everything in it.
+commit_git_repo() {
+  git -C "$1" init -q -b main
+  git -C "$1" config user.email "workspace-tests@example.com"
+  git -C "$1" config user.name "Workspace Tests"
+  git -C "$1" add -A
+  git -C "$1" commit -qm "initial"
+}
+
 # Helper to create a fake app directory for testing
 create_fake_app() {
   local app_dir="$TEST_TMP/$1"

@@ -700,4 +700,38 @@ chmod +x bin/setup
 assert_false "empty sanitized workspace identity is rejected" env SUPERSET_ROOT_PATH="$root_dir" SUPERSET_WORKSPACE_NAME="///" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_false "invalid identity is rejected before setup" [ -f .setup-called ]
 
+# --once is for agent session hooks: bootstrap a fresh linked Git worktree a
+# single time, and stay silent in the original checkout and managed providers.
+once_root="$TEST_TMP/once-root"
+once_worktree="$TEST_TMP/once-worktree"
+mkdir -p "$once_root/bin"
+cat > "$once_root/bin/setup" <<'SCRIPT'
+#!/bin/sh
+printf 'setup\n' >> "$WORKSPACE_TEST_LOG"
+SCRIPT
+chmod +x "$once_root/bin/setup"
+printf '.workspace\n' > "$once_root/.gitignore"
+commit_git_repo "$once_root"
+git -C "$once_root" worktree add -q --detach "$once_worktree"
+once_log="$TEST_TMP/once.log"
+
+cd "$once_root"
+WORKSPACE_TEST_LOG="$once_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" --once >/dev/null 2>&1
+assert_false "bootstrap --once skips the original checkout" [ -s "$once_log" ]
+
+cd "$once_worktree"
+WORKSPACE_TEST_LOG="$once_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" --once >/dev/null 2>&1
+once_status=$?
+assert_equal "bootstrap --once sets up a fresh worktree" "0" "$once_status"
+assert_true "bootstrap --once writes the identity marker" [ -s .workspace ]
+assert_equal "bootstrap --once ran setup" "1" "$(grep -c '^setup$' "$once_log")"
+once_output=$(WORKSPACE_TEST_LOG="$once_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" --once 2>&1)
+assert_equal "bootstrap --once is silent once bootstrapped" "" "$once_output"
+assert_equal "bootstrap --once does not rerun setup" "1" "$(grep -c '^setup$' "$once_log")"
+
+rm -f .workspace
+CONDUCTOR_ROOT_PATH="$once_root" CONDUCTOR_WORKSPACE_NAME="once-managed" \
+  WORKSPACE_TEST_LOG="$once_log" sh "$WORKSPACE_HOME/lib/bootstrap.sh" --once >/dev/null 2>&1
+assert_false "bootstrap --once defers to managed providers" [ -e .workspace ]
+
 report "bootstrap lifecycle"

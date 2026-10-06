@@ -25,7 +25,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/registry.sh"
 
 [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] && {
-  echo "Usage: workspace bootstrap"
+  echo "Usage: workspace bootstrap [--once]"
   echo ""
   echo "Root/default checkout: sources the environment hook, then runs the"
   echo "project's ordinary setup script only."
@@ -38,12 +38,28 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
   echo "original checkout."
   echo ""
   echo "Workspace never runs bin/update."
+  echo ""
+  echo "Options:"
+  echo "  --once  Only bootstrap a linked Git worktree that is not yet set up"
+  echo "          (no .workspace marker or no registration); exit quietly"
+  echo "          otherwise (for agent session hooks)"
   exit 0
 }
 
+_bootstrap_once=false
+[ "${1:-}" != "--once" ] || _bootstrap_once=true
+
 resolve_workspace
+
+# --once (agent session hooks): only an unmanaged linked worktree missing its
+# identity marker or registration needs setup. Archive unregisters, so a
+# worktree torn down by hand is set up again.
+[ "$_bootstrap_once" != true ] || [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
 sanitize_workspace_name
 resolve_workspace_identity
+if [ "$_bootstrap_once" = true ] && [ -e .workspace ] && workspace_is_registered 2>/dev/null; then
+  exit 0
+fi
 detect_app_name
 detect_setup_script
 

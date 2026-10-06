@@ -127,10 +127,16 @@ wait_for_workspace_registry_lock() {
   done
 }
 
-registered_workspace_port() {
+# Succeeds when this workspace has a valid registry record, leaving its path in
+# _registered_entry.
+workspace_is_registered() {
   _registered_entry=$(workspace_registry_entry) || return 1
   [ -f "$_registered_entry" ] && [ ! -L "$_registered_entry" ] || return 1
-  [ "$(sed -n '1p' "$_registered_entry")" = "$WORKSPACE_NAME" ] || return 1
+  [ "$(sed -n '1p' "$_registered_entry")" = "$WORKSPACE_NAME" ]
+}
+
+registered_workspace_port() {
+  workspace_is_registered || return 1
   _registered_value=$(sed -n '4p' "$_registered_entry")
   case "$_registered_value" in
     ""|*[!0-9]*) return 1 ;;
