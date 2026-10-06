@@ -11,6 +11,58 @@ output_has() {
 help_output=$(WORKSPACE_HOME="$WORKSPACE_HOME" "$WORKSPACE_HOME/bin/workspace" --help)
 assert_true "CLI help lists info command" output_has "$help_output" '^  info '
 
+# Hosts such as the Claude desktop app export names that are not shell
+# identifiers. The CLI drops them so .env loading still works, and keeps every
+# other variable, including multi-line values that mention such a name.
+app_dir=$(create_fake_app "info-invalid-env")
+cd "$app_dir"
+printf 'WORKSPACE_PORT=4500\n' > .env
+invalid_env_stderr="$TEST_TMP/info-invalid-env.err"
+invalid_env_multi=$(printf 'line1\nBAD-NAME=x')
+output=$(env 'SENTRY-TRACE=abc-123' CONDUCTOR_ROOT_PATH="$app_dir" CONDUCTOR_WORKSPACE_NAME="invalid-env" \
+  INVALID_ENV_MULTI="$invalid_env_multi" WORKSPACE_HOME="$WORKSPACE_HOME" \
+  sh "$WORKSPACE_HOME/bin/workspace" info 2>"$invalid_env_stderr")
+assert_false "CLI drops environment names that are not identifiers" grep -q 'not a valid identifier' "$invalid_env_stderr"
+assert_true "CLI still loads .env defaults" output_has "$output" '^Ports: 4500-4509$'
+stub_home="$TEST_TMP/invalid-env-home"
+mkdir -p "$stub_home/lib"
+cat > "$stub_home/lib/info.sh" <<'EOF'
+printf '%s' "$INVALID_ENV_MULTI"
+EOF
+multi_output=$(env 'SENTRY-TRACE=abc-123' INVALID_ENV_MULTI="$invalid_env_multi" WORKSPACE_HOME="$stub_home" \
+  sh "$WORKSPACE_HOME/bin/workspace" info)
+assert_equal "CLI keeps multi-line values when dropping invalid names" "$invalid_env_multi" "$multi_output"
+
+# Names starting with a digit are not identifiers either.
+output=$(env '1FOO=x' CONDUCTOR_ROOT_PATH="$app_dir" CONDUCTOR_WORKSPACE_NAME="invalid-env" \
+  WORKSPACE_HOME="$WORKSPACE_HOME" sh "$WORKSPACE_HOME/bin/workspace" info 2>"$invalid_env_stderr")
+assert_false "CLI drops names starting with a digit" grep -q 'not a valid identifier' "$invalid_env_stderr"
+assert_true "CLI loads .env defaults past digit-leading names" output_has "$output" '^Ports: 4500-4509$'
+
+# Values that are not valid UTF-8 must not stop the scan in a UTF-8 locale.
+invalid_byte_value=$(printf 'caf\351')
+assert_true "CLI runs with a non-UTF-8 environment value" env LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+  INVALID_BYTE="$invalid_byte_value" WORKSPACE_HOME="$WORKSPACE_HOME" sh "$WORKSPACE_HOME/bin/workspace" version
+
+# The restart guard is not inherited by commands the CLI runs.
+cat > "$stub_home/lib/info.sh" <<'EOF'
+printf '%s' "${WORKSPACE_ENV_SANITIZED-unset}"
+EOF
+guard_output=$(env 'SENTRY-TRACE=abc-123' WORKSPACE_HOME="$stub_home" sh "$WORKSPACE_HOME/bin/workspace" info)
+assert_equal "CLI does not leak its restart guard" "unset" "$guard_output"
+
+# An install path containing "=" restarts the same script, not an assignment.
+equals_home="$TEST_TMP/install=path"
+mkdir -p "$equals_home/bin" "$equals_home/lib"
+cp "$WORKSPACE_HOME/bin/workspace" "$equals_home/bin/workspace"
+: > "$equals_home/lib/common.sh"
+cat > "$equals_home/lib/info.sh" <<'EOF'
+printf 'restarted'
+EOF
+equals_output=$(cd "$equals_home/bin" && env -u WORKSPACE_HOME 'SENTRY-TRACE=abc-123' sh workspace info 2>&1)
+assert_equal "CLI restarts itself from a path containing =" "restarted" "$equals_output"
+cd "$TEST_TMP"
+
 app_dir=$(create_fake_app "info-conductor")
 root_dir=$(create_fake_root "info-conductor")
 cd "$app_dir"
