@@ -20,9 +20,15 @@ set -e
 # passes SENTRY-TRACE to hooks). Shells cannot re-evaluate them, which breaks
 # .env loading, so restart once without them. A line inside a multi-line value
 # that merely looks like such a name only unsets a variable that does not exist.
-_workspace_invalid_env_names=$(env | sed -n 's/^\([^=]*[^A-Za-z0-9_=][^=]*\)=.*/\1/p')
+# The scan is byte-oriented (LC_ALL=C) so values that are not valid UTF-8 pass.
+# The restart runs /bin/sh on this script's absolute path, so a path containing
+# "=" is never read as an assignment and PATH cannot pick another workspace.
+_workspace_invalid_env_names=$(env | LC_ALL=C sed -n \
+  -e 's/^\([^=]*[^A-Za-z0-9_=][^=]*\)=.*/\1/p' \
+  -e 's/^\([0-9][^=]*\)=.*/\1/p')
 if [ -n "$_workspace_invalid_env_names" ] && [ -z "${WORKSPACE_ENV_SANITIZED:-}" ]; then
-  set -- WORKSPACE_ENV_SANITIZED=1 "$0" "$@"
+  _workspace_self="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+  set -- WORKSPACE_ENV_SANITIZED=1 /bin/sh "$_workspace_self" "$@"
   while IFS= read -r _workspace_invalid_env_name; do
     set -- -u "$_workspace_invalid_env_name" "$@"
   done <<EOF
@@ -30,7 +36,8 @@ $_workspace_invalid_env_names
 EOF
   exec env "$@"
 fi
-unset _workspace_invalid_env_names
+# Only guards the restart above; nested workspace commands sanitize again.
+unset _workspace_invalid_env_names WORKSPACE_ENV_SANITIZED
 
 if [ -z "${WORKSPACE_HOME:-}" ]; then
   _workspace_home_candidate=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
