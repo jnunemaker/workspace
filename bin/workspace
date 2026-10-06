@@ -16,6 +16,22 @@
 
 set -e
 
+# Hosts can export names that are not shell identifiers (the Claude desktop app
+# passes SENTRY-TRACE to hooks). Shells cannot re-evaluate them, which breaks
+# .env loading, so restart once without them. A line inside a multi-line value
+# that merely looks like such a name only unsets a variable that does not exist.
+_workspace_invalid_env_names=$(env | sed -n 's/^\([^=]*[^A-Za-z0-9_=][^=]*\)=.*/\1/p')
+if [ -n "$_workspace_invalid_env_names" ] && [ -z "${WORKSPACE_ENV_SANITIZED:-}" ]; then
+  set -- WORKSPACE_ENV_SANITIZED=1 "$0" "$@"
+  while IFS= read -r _workspace_invalid_env_name; do
+    set -- -u "$_workspace_invalid_env_name" "$@"
+  done <<EOF
+$_workspace_invalid_env_names
+EOF
+  exec env "$@"
+fi
+unset _workspace_invalid_env_names
+
 if [ -z "${WORKSPACE_HOME:-}" ]; then
   _workspace_home_candidate=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
   if [ -f "$_workspace_home_candidate/lib/common.sh" ]; then
