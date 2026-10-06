@@ -57,7 +57,7 @@ cd "$_claude_cwd"
 # The session may have moved into a subdirectory; lifecycle commands run from
 # the worktree root.
 _claude_paths=$(git rev-parse --show-toplevel --absolute-git-dir 2>/dev/null) || exit 0
-{ read -r _claude_top; read -r _claude_git_dir; } <<EOF
+{ IFS= read -r _claude_top; IFS= read -r _claude_git_dir; } <<EOF
 $_claude_paths
 EOF
 cd "$_claude_top"
