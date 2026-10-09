@@ -18,6 +18,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/detect.sh"
 . "$WORKSPACE_LIB/registry.sh"
+. "$WORKSPACE_LIB/ports.sh"
 
 # Help is a read-only command. Return before project detection or dotenv
 # sourcing so a broken checkout cannot prevent the usage text from rendering.
@@ -103,13 +104,11 @@ fi
 
 # ── Sweep ports ──────────────────────────────────────────────────
 
-for offset in $(seq 0 9); do
-  port=$((BASE_PORT + offset))
-  pids=$(lsof -ti :"$port" 2>/dev/null || true)
-  if [ -n "$pids" ]; then
-    kill $pids 2>/dev/null || true
-  fi
-done
+# Do not run project startup against a block that cleanup could not release.
+clear_workspace_ports "$BASE_PORT" || {
+  err "Startup stopped before the run hook or Foreman; resolve the port conflict and retry."
+  exit 1
+}
 
 # ── Run hook ─────────────────────────────────────────────────────
 

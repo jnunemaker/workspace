@@ -247,6 +247,37 @@ worktree. The registry, deferred SessionEnd prune, and reconciliation on the
 next `workspace bootstrap` or `workspace run` are recovery mechanisms when
 native cleanup could not complete.
 
+## Port cleanup
+
+`run` and `archive` ask processes holding the resolved 10-port block to stop,
+then verify that the block is clear before continuing. Cleanup has a five-second
+budget for inspection and waiting. It sends TERM once per selected process and
+never escalates to KILL or terminates replacements that appear while waiting.
+
+Selection covers TCP listeners and UDP sockets whose **local** port is in the
+block. Client connections to those ports are excluded. Port allocation is not
+proof that a process belongs to the checkout; this remains port-based cleanup,
+not a process ownership registry or an orphan-prevention mechanism.
+
+If ports remain occupied or inspection fails, `run` stops before its startup
+hook and Foreman. `archive` stops before database cleanup and retains any cleanup
+registration for retry; its archive hook may already have run. Errors show the
+last observed PID, port, protocol, local endpoint, state, process name and user
+when available, without command arguments or environment values. `lsof` must be
+installed and able to inspect sockets. Warnings about incomplete inspection also
+stop cleanup rather than silently assuming the block is clear. Check the owning
+app or terminal before retrying. Missing inspection details are not proof that a
+port is free; operating-system permissions can limit what `lsof` can observe.
+
+Archive hooks must tolerate retries: retained registrations can be retried by
+prune, including after port-cleanup or database failures. This preserves the
+existing hook-before-sweep ordering; Workspace does not roll back hook effects.
+A machine with restricted inspection or unrelated occupants may require resolving
+that condition before startup/archive can proceed.
+
+This does not supervise Foreman or cover applications launched directly with
+`bin/dev`. The original-checkout archive exclusion remains unchanged.
+
 ## Project application URL
 
 To give `info` and `run` the same project hostname with the resolved application

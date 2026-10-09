@@ -191,9 +191,9 @@ PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
   WORKSPACE_TEST_ARCHIVE_LOG="$archive_rails_log" \
   WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" \
   sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
-assert_equal "archive honors dotenv workspace port block" "10" "$(wc -l < "$archive_lsof_log" | tr -d ' ')"
-assert_true "archive starts dotenv port sweep at the explicit base" grep -q -- '-ti :51500' "$archive_lsof_log"
-assert_true "archive ends dotenv port sweep at the block boundary" grep -q -- '-ti :51509' "$archive_lsof_log"
+assert_equal "archive inspects dotenv workspace port block once" "1" "$(wc -l < "$archive_lsof_log" | tr -d ' ')"
+assert_true "archive starts dotenv port sweep at the explicit base" grep -q -- '-i :51500-51509' "$archive_lsof_log"
+assert_true "archive requests structured socket details" grep -q -- '-FpcuLPnT' "$archive_lsof_log"
 assert_true "archive database cleanup uses authoritative Conductor identity" grep -q '^development:_stable-archive-name:db:drop$' "$archive_rails_log"
 
 # A malformed or failing dotenv must stop archive before partial environment

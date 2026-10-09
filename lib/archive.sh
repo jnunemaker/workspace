@@ -15,6 +15,7 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 . "$WORKSPACE_LIB/common.sh"
 . "$WORKSPACE_LIB/db.sh"
 . "$WORKSPACE_LIB/registry.sh"
+. "$WORKSPACE_LIB/ports.sh"
 
 # Help must return before archive inspects or removes workspace resources.
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -108,14 +109,12 @@ fi
 
 if [ -n "$BASE_PORT" ]; then
   step "Sweeping ports $BASE_PORT-$((BASE_PORT + 9))"
-  for offset in $(seq 0 9); do
-    port=$((BASE_PORT + offset))
-    pids=$(lsof -ti :"$port" 2>/dev/null || true)
-    if [ -n "$pids" ]; then
-      detail "Killing process on port $port"
-      kill $pids 2>/dev/null || true
-    fi
-  done
+  # Keep databases and recovery registration until port cleanup is verified.
+  # The project archive hook above may already have run; this is not rollback.
+  clear_workspace_ports "$BASE_PORT" || {
+    err "Archive stopped before database cleanup; any cleanup registration has been retained."
+    exit 1
+  }
   ok "Ports cleared"
 fi
 

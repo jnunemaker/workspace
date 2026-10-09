@@ -518,10 +518,10 @@ PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIV
 assert_false "stale registry entry removed" [ -f "$registry_entry" ]
 assert_true "prune drops development database" grep -q "development:_${registered_name}:db:drop" "$prune_log"
 assert_true "prune drops test database" grep -q "test:_${registered_name}:db:drop" "$prune_log"
-assert_true "port sweep uses isolated lsof stub" [ "$(wc -l < "$lsof_log" | tr -d ' ')" -eq 20 ]
-assert_equal "stale prune keeps the claimed registry port despite environment hook replacement" "2" "$(grep -c -- '-ti :51230' "$lsof_log")"
-assert_equal "stale prune sweeps the end of the claimed registry block" "2" "$(grep -c -- '-ti :51239' "$lsof_log")"
-assert_false "stale prune never sweeps the hook-supplied port" grep -q -- '-ti :53000' "$lsof_log"
+assert_true "port sweep uses isolated lsof stub" [ "$(wc -l < "$lsof_log" | tr -d ' ')" -eq 2 ]
+assert_equal "stale prune keeps the claimed registry port despite environment hook replacement" "2" "$(grep -c -- '-i :51230-51239' "$lsof_log")"
+assert_equal "stale prune uses structured socket inspection" "2" "$(grep -c -- '-FpcuLPnT' "$lsof_log")"
+assert_false "stale prune never sweeps the hook-supplied port" grep -q -- ':53000' "$lsof_log"
 assert_true "archive hook runs from surviving root" grep -q "^${git_root}:_${registered_name}$" "$archive_hook_log"
 
 # Registration is intentionally limited to generic Git worktrees; existing
