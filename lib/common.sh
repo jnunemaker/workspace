@@ -512,7 +512,9 @@ workspace_app_url() (
       esac
     done
   elif [ "$USES_CADDY" = "true" ]; then
-    printf 'https://%s.localhost:%s\n' "$(basename "$(pwd)")" "$1"
+    # Name a host Caddy serves; a checkout directory name is not one.
+    _host=$(caddy_host)
+    printf 'https://%s:%s\n' "${_host:-localhost}" "$1"
   else
     printf 'http://localhost:%s\n' "$1"
   fi

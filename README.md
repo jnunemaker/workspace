@@ -264,7 +264,10 @@ put one workspace's allocated port in it.
 Existing run-hook overrides remain supported, but affect only `run`. Move URL-only settings
 out of that hook when adopting the shared template: `info` never runs startup
 hooks. A conflicting hook assignment can make the two commands display different
-addresses. Projects without a template keep their existing fallback URL.
+addresses. Without a template, Caddy projects show the first named HTTPS site host
+in the Caddyfile that the `caddy:` Procfile.dev process loads (`--config`, or
+`./Caddyfile` by default), falling back to a listed `localhost` or IP address,
+then `localhost`; other projects show `http://localhost:{port}`.
 
 The URL is display configuration, not a server or certificate setting. Nothing
 is saved or checked for reachability. Before a Git worktree reserves its ports,

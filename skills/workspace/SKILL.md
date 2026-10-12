@@ -164,6 +164,10 @@ assignments can make `info` and `run` display different addresses. `info` does n
 run startup hooks or reserve ports; its port may be provisional before setup/run.
 It also cannot see application-port overrides made by a run hook.
 This configures the displayed address, not the web server or certificates.
+Without a template, Caddy projects already show the first named HTTPS site host
+in the Caddyfile the `caddy:` Procfile.dev process loads (preferred over bare
+`localhost` or an IP, the fallback), so add a template only when that host is not
+the one to display.
 
 ## Reference
 

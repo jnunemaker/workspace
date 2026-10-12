@@ -70,6 +70,15 @@ cat > Procfile.dev <<'EOF'
 caddy: caddy run
 vite: bin/vite dev
 EOF
+cat > Caddyfile <<'EOF'
+{
+  https_port {$HTTPS_PORT:3000}
+}
+
+app.localhost, localhost {
+  reverse_proxy localhost:{$RAILS_PORT:3001}
+}
+EOF
 
 output=$(CONDUCTOR_ROOT_PATH="$root_dir" CONDUCTOR_WORKSPACE_NAME="feature-info" CONDUCTOR_PORT=4100 sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "info reports Conductor provider" output_has "$output" '^Provider: conductor$'
@@ -77,7 +86,7 @@ assert_true "info reports workspace name" output_has "$output" '^Workspace: feat
 assert_true "info reports provider-derived identity source" output_has "$output" '^Identity source: derived$'
 assert_true "info reports root" output_has "$output" "^Root: $root_dir$"
 assert_true "info reports database suffix" output_has "$output" '^Database suffix: _feature-info$'
-assert_true "info reports Caddy URL" output_has "$output" '^URL: https://info-conductor.localhost:4100$'
+assert_true "info reports the host Caddy serves" output_has "$output" '^URL: https://app.localhost:4100$'
 assert_true "info reports allocated port block" output_has "$output" '^Ports: 4100-4109$'
 assert_true "info reports Rails port" output_has "$output" '^  Rails: 4101$'
 assert_true "info reports Caddy admin port" output_has "$output" '^  Caddy admin: 4102$'
