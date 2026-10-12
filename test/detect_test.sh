@@ -49,6 +49,94 @@ printf "web: bin/rails server\ncaddy: caddy run" > Procfile.dev
 detect_caddy
 assert_equal "caddy line → true" "true" "$USES_CADDY"
 
+assert_caddy_host() {
+  assert_equal "$1" "$2" "$(caddy_host)"
+}
+
+assert_caddy_host "missing Caddyfile → no host" ""
+
+# The served host comes from the site addresses, after the global options
+# block and snippets, never from the checkout directory name.
+cat > Caddyfile <<'EOF'
+# Local development proxy
+{
+  admin localhost:{$CADDY_ADMIN_PORT:2019}
+  https_port {$HTTPS_PORT:3000}
+}
+
+(proxy) {
+  reverse_proxy localhost:{$RAILS_PORT:3001}
+}
+
+:80 {$EXTRA_HOST}, *.wild.localhost,
+  https://Project.localhost:443/path, bxout.localhost {
+  import proxy
+}
+EOF
+assert_caddy_host "Caddyfile site → first concrete host" "project.localhost"
+
+printf 'example.localhost\nreverse_proxy localhost:3001\n' > Caddyfile
+assert_caddy_host "single-site Caddyfile without braces → host" "example.localhost"
+
+mkdir -p config
+printf 'from-config.localhost {\n}\n' > config/Caddyfile.dev
+printf "caddy: caddy run --config 'config/Caddyfile.dev' --adapter=caddyfile\n" > Procfile.dev
+assert_caddy_host "--config Caddyfile → host" "from-config.localhost"
+
+printf 'caddy: caddy run --config=config/Caddyfile.dev\n' > Procfile.dev
+assert_caddy_host "--config= Caddyfile → host" "from-config.localhost"
+
+printf 'caddy: caddy run --config caddy.json\n' > Procfile.dev
+printf '{"apps":{}}\n' > caddy.json
+assert_caddy_host "JSON config → no host" ""
+
+printf 'caddy: caddy run --config $CADDYFILE\n' > Procfile.dev
+assert_caddy_host "variable config path → no host" ""
+
+printf 'caddy: caddy run\n' > Procfile.dev
+printf ':443 {\n}\n' > Caddyfile
+assert_caddy_host "port-only site → no host" ""
+
+printf 'import common.caddy\n\napp.localhost {\n}\n' > Caddyfile
+assert_caddy_host "top-level import is not a host" "app.localhost"
+
+printf 'import common.caddy\napp.localhost\nreverse_proxy localhost:3001\n' > Caddyfile
+assert_caddy_host "import before braceless site → host" "app.localhost"
+
+printf '{\n  admin off\n}\napp.localhost\nreverse_proxy localhost:3001\n' > Caddyfile
+assert_caddy_host "global options before braceless site → host" "app.localhost"
+
+printf '(proxy) {\n  reverse_proxy localhost:3001\n}\napp.localhost\nimport proxy\n' > Caddyfile
+assert_caddy_host "snippet before braceless site → host" "app.localhost"
+
+printf 'app.localhost:{$HTTPS_PORT:3000} {\n}\n' > Caddyfile
+assert_caddy_host "placeholder port keeps host" "app.localhost"
+
+printf '"app.localhost" {\n}\n' > Caddyfile
+assert_caddy_host "quoted site address → host" "app.localhost"
+
+printf 'localhost, 127.0.0.1 {\n}\nhttp://localhost {\n}\nlocalhost, project.localhost {\n}\n' > Caddyfile
+assert_caddy_host "named host preferred over localhost" "project.localhost"
+
+printf '127.0.0.1, localhost {\n}\n' > Caddyfile
+assert_caddy_host "only localhost or IPs → first one" "127.0.0.1"
+
+printf ':80\nreverse_proxy localhost:3001\n' > Caddyfile
+assert_caddy_host "braceless directives are not hosts" ""
+
+printf 'http://plain.localhost {\n}\napp.localhost:80, secure.localhost {\n}\n' > Caddyfile
+assert_caddy_host "HTTP-only addresses are skipped" "secure.localhost"
+
+printf '{\r\n  admin off\r\n}\r\napp.localhost {\r\n}\r\n' > Caddyfile
+printf 'caddy: caddy run --config Caddyfile --adapter caddyfile\r\n' > Procfile.dev
+assert_caddy_host "CRLF Procfile.dev and Caddyfile → host" "app.localhost"
+
+printf 'caddy: caddy run\n' > Procfile.dev
+printf 'linked.localhost {\n}\n' > shared.caddy
+rm Caddyfile
+ln -s shared.caddy Caddyfile
+assert_caddy_host "symlinked Caddyfile → host" "linked.localhost"
+
 # ── detect_vite ──────────────────────────────────────────────────
 
 # From Procfile.dev

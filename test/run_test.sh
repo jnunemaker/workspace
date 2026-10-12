@@ -308,20 +308,29 @@ PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
 
 assert_true "non-Caddy URL fallback is unchanged" grep -q 'http://localhost:51300' "$output"
 
-# Caddy projects retain the historical HTTPS fallback when the hook does not
-# provide a project-specific URL.
+# Caddy projects show the host their Caddyfile serves, never one named after
+# the checkout directory, which Caddy has no site or certificate for.
 paths=$(make_run_app "caddy-fallback")
 app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/caddy-fallback.log"
 output="$TEST_TMP/caddy-fallback.out"
-printf 'caddy: caddy run\n' > "$app_dir/Procfile.dev"
+printf 'caddy: caddy run --config config/Caddyfile --adapter caddyfile\n' > "$app_dir/Procfile.dev"
+printf 'project.localhost {\n  reverse_proxy localhost:3001\n}\n' > "$app_dir/config/Caddyfile"
 cd "$app_dir"
 PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="caddy-workspace" CONDUCTOR_PORT=51400 \
   WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
 
-assert_true "Caddy URL fallback is unchanged" grep -q 'https://caddy-fallback.localhost:51400' "$output"
+assert_true "Caddy URL uses the configured site host" grep -q 'https://project.localhost:51400' "$output"
+assert_false "Caddy URL does not use the checkout directory" grep -q 'caddy-fallback.localhost' "$output"
+
+rm "$app_dir/config/Caddyfile"
+PATH="$fake_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \
+  CONDUCTOR_WORKSPACE_NAME="caddy-workspace" CONDUCTOR_PORT=51400 \
+  WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+
+assert_true "Caddy URL without a readable site host uses localhost" grep -q 'https://localhost:51400' "$output"
 
 # A provider identity that sanitizes to empty must stop before Foreman starts.
 paths=$(make_run_app "invalid-name")
