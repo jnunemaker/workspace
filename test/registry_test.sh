@@ -336,6 +336,28 @@ kill "$other_lock_owner"
 wait "$other_lock_owner" 2>/dev/null || true
 rm "$git_root/.git/workspace/prune.lock"
 
+# A run left waiting after its worktree is deleted must give up instead of
+# polling a lock it can no longer use for as long as the owner stays alive.
+sleep 300 &
+other_lock_owner=$!
+ln -s "$other_lock_owner" "$git_root/.git/workspace/prune.lock"
+removed_checkout="$TEST_TMP/removed-checkout"
+mkdir -p "$removed_checkout"
+removed_wait_started=$(date +%s)
+assert_false "lock wait stops once its checkout is removed" sh -c '
+  . "$1/lib/common.sh"
+  . "$1/lib/registry.sh"
+  WORKSPACE_GIT_COMMON_DIR="$2"
+  cd "$3"
+  rmdir "$3"
+  WORKSPACE_REGISTRY_LOCK_ATTEMPTS=300 wait_for_workspace_registry_lock
+' sh "$WORKSPACE_HOME" "$WORKSPACE_GIT_COMMON_DIR" "$removed_checkout"
+assert_true "removed checkout lock wait returns promptly" [ $(( $(date +%s) - removed_wait_started )) -lt 5 ]
+
+kill "$other_lock_owner"
+wait "$other_lock_owner" 2>/dev/null || true
+rm "$git_root/.git/workspace/prune.lock"
+
 # Help must return before Git discovery, registry locking, or stale cleanup.
 prune_help_bin="$TEST_TMP/prune-help-bin"
 prune_help_git_log="$TEST_TMP/prune-help-git.log"
