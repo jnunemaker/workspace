@@ -114,14 +114,25 @@ workspace_registry_lock_owned() {
   [ "$(readlink "$_workspace_lock" 2>/dev/null || true)" = "$$" ]
 }
 
+# Bootstrap and archive hold the lock through project hooks, so a hung hook or
+# a reused owner pid can keep it busy indefinitely. Wait about ten minutes by
+# default (0 waits forever), and stop as soon as the checkout this process is
+# working for has been removed, since nothing it would register still exists.
 wait_for_workspace_registry_lock() {
   _registry_lock_attempt=0
-  _registry_lock_attempts="${WORKSPACE_REGISTRY_LOCK_ATTEMPTS:-0}"
+  _registry_lock_attempts="${WORKSPACE_REGISTRY_LOCK_ATTEMPTS:-6000}"
   until acquire_workspace_registry_lock; do
     _registry_lock_attempt=$((_registry_lock_attempt + 1))
+    if [ -n "${PWD:-}" ] && [ ! -d "$PWD" ]; then
+      return 1
+    fi
     if [ "$_registry_lock_attempts" -gt 0 ] && \
       [ "$_registry_lock_attempt" -ge "$_registry_lock_attempts" ]; then
       return 1
+    fi
+    if [ "$_registry_lock_attempt" -eq 20 ]; then
+      _registry_lock_holder=$(readlink "$(workspace_registry_lock)" 2>/dev/null || true)
+      warn "Waiting for workspace lock held by pid ${_registry_lock_holder:-unknown}" >&2
     fi
     sleep 0.1
   done
