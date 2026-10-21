@@ -633,6 +633,64 @@ else
   warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
 fi
 
+# ── Create T3 Code project scripts ──────────────────────────────
+#
+# T3 Code reads t3.json from the repository root. A runOnWorktreeCreate script
+# with async false holds the agent until bootstrap exits, so agent sessions
+# T3 hosts never need to bootstrap from their own startup hooks. Existing
+# files are merged like .claude/settings.json: other keys and scripts are
+# preserved, legacy Workspace commands move to the shim, and each Workspace
+# script is added only when no script already runs that command.
+
+# Print t3.json with the Workspace scripts merged in, reading the existing
+# file when present. Fails, printing nothing, on unparseable input.
+_t3_project_json() {
+  ruby -rjson -e '
+    path = ARGV.fetch(0)
+    project = File.exist?(path) ? JSON.parse(File.read(path)) : { "$schema" => "https://t3.codes/schema/t3.json" }
+    raise "t3.json must be an object" unless Hash === project
+    scripts = project["scripts"] ||= []
+    raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
+
+    scripts.each do |script|
+      script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
+    end
+
+    [
+      { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure", "runOnWorktreeCreate" => true, "async" => false },
+      { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
+      { "name" => "Workspace info", "command" => "bin/workspace info", "icon" => "debug" },
+      { "name" => "Archive workspace", "command" => "bin/workspace archive", "icon" => "build" }
+    ].each do |workspace_script|
+      scripts << workspace_script unless scripts.any? { |script| script["command"] == workspace_script["command"] }
+    end
+
+    print JSON.pretty_generate(project) + "\n"
+  ' "$1" 2>/dev/null
+}
+
+_ensure_t3_project() {
+  _t3_project_output=$(_t3_project_json "$1") || return 1
+  printf '%s\n' "$_t3_project_output" | _atomic_write "$1" 644
+}
+
+if _linked_provider_config t3.json; then
+  :
+elif ! command -v ruby >/dev/null 2>&1; then
+  warn "Ruby is not available — skipped T3 Code scripts in t3.json"
+elif [ -f t3.json ]; then
+  if _ensure_t3_project t3.json; then
+    step "t3.json already exists (Workspace scripts ensured)"
+  else
+    warn "Couldn't parse t3.json — left it unchanged."
+    warn "Add the Workspace scripts from the Workspace README by hand."
+  fi
+elif _ensure_t3_project t3.json; then
+  ok "Created t3.json"
+else
+  warn "Could not create t3.json — T3 Code scripts were skipped"
+fi
+
 # ── Add .workspace to .gitignore ────────────────────────────────
 
 if [ -f .gitignore ] && grep -qxF '.workspace' .gitignore; then

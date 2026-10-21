@@ -69,6 +69,22 @@ resolve_workspace
 [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
 [ -x bin/workspace ] || exit 0
 
+# T3 Code runs the t3.json setup script itself when it creates a worktree, and
+# it gives Claude only a short time to start, which a full bootstrap in this
+# hook outlasts. Sessions T3 hosts leave the lifecycle to T3 whenever t3.json
+# bootstraps new worktrees. Without that script the hook still sets up.
+_claude_t3_owns_lifecycle() {
+  [ -n "${T3CODE_CLI_PATH:-}" ] && [ -f t3.json ] || return 1
+  command -v ruby >/dev/null 2>&1 || return 1
+  ruby -rjson -e '
+    scripts = JSON.parse(File.read("t3.json"))["scripts"]
+    exit(Array === scripts && scripts.any? { |script|
+      Hash === script && script["command"] == "bin/workspace bootstrap" && script["runOnWorktreeCreate"] == true
+    })
+  ' 2>/dev/null
+}
+! _claude_t3_owns_lifecycle || exit 0
+
 _claude_branch_marker="$_claude_git_dir/workspace-claude-branch"
 _claude_bootstrapping_marker="$_claude_git_dir/workspace-claude-bootstrapping"
 _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"

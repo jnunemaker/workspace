@@ -4,6 +4,9 @@
 cd "$(dirname "$0")"
 . ./test_helper.sh
 
+# Tests may run inside a T3 Code session; each T3 case sets this itself.
+unset T3CODE_CLI_PATH
+
 hook_root="$TEST_TMP/claude-root"
 hook_worktree="$TEST_TMP/claude-worktree"
 codex_worktree="$TEST_TMP/claude-codex-worktree"
@@ -274,5 +277,25 @@ printf '424242\n' > "$worktree_git_dir/workspace-claude-bootstrapping"
 wait "$overlap_start" 2>/dev/null || true
 assert_equal "finished setup keeps another session's marker" "424242" "$(cat "$worktree_git_dir/workspace-claude-bootstrapping" 2>/dev/null)"
 rm -f "$worktree_git_dir/workspace-claude-bootstrapping"
+
+# T3 Code bootstraps worktrees from t3.json before Claude starts, so sessions
+# it hosts skip the hook lifecycle; without that script the hook still sets up.
+t3_worktree="$TEST_TMP/claude-t3-worktree"
+git -C "$hook_root" worktree add -q -b t3/feature "$t3_worktree"
+cat > "$t3_worktree/t3.json" <<'EOF'
+{"scripts":[{"name":"Bootstrap workspace","command":"bin/workspace bootstrap","runOnWorktreeCreate":true,"async":false}]}
+EOF
+setups_before=$(count_log setup)
+(export T3CODE_CLI_PATH=/usr/local/bin/t3; run_hook session-start "$t3_worktree") >/dev/null 2>&1
+assert_equal "session-start leaves T3-bootstrapped worktrees to T3" "$setups_before" "$(count_log setup)"
+assert_false "session-start under T3 records no session branch" [ -f "$(git -C "$t3_worktree" rev-parse --absolute-git-dir)/workspace-claude-branch" ]
+run_hook session-start "$t3_worktree" >/dev/null 2>&1
+assert_equal "session-start outside T3 still bootstraps" "$((setups_before + 1))" "$(count_log setup)"
+
+t3_manual_worktree="$TEST_TMP/claude-t3-manual-worktree"
+git -C "$hook_root" worktree add -q -b t3/manual "$t3_manual_worktree"
+printf '{"scripts":[{"name":"Bootstrap workspace","command":"bin/workspace bootstrap"}]}\n' > "$t3_manual_worktree/t3.json"
+(export T3CODE_CLI_PATH=/usr/local/bin/t3; run_hook session-start "$t3_manual_worktree") >/dev/null 2>&1
+assert_equal "session-start under T3 bootstraps without a worktree setup script" "$((setups_before + 2))" "$(count_log setup)"
 
 report "claude-hook"
