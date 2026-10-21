@@ -611,27 +611,38 @@ _claude_settings_json() {
   ' "$1" 2>/dev/null
 }
 
-_ensure_claude_settings() {
-  _claude_settings_output=$(_claude_settings_json "$1") || return 1
-  printf '%s\n' "$_claude_settings_output" | _atomic_write "$1" 644
+# Merge Workspace entries into a JSON provider config with a Ruby generator
+# that prints the merged file, creating the file when it is missing. Linked,
+# unparseable, or Ruby-less configs are left unchanged with a warning.
+_ensure_json_provider_config() {
+  _json_config="$1"
+  _json_generator="$2"
+  _json_entries="$3"
+
+  if _linked_provider_config "$_json_config"; then
+    return 0
+  elif ! command -v ruby >/dev/null 2>&1; then
+    warn "Ruby is not available — skipped $_json_entries in $_json_config"
+    return 0
+  fi
+
+  if [ -f "$_json_config" ]; then
+    if _json_output=$("$_json_generator" "$_json_config") && \
+       printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
+      step "$_json_config already exists ($_json_entries ensured)"
+    else
+      warn "Couldn't parse $_json_config — left it unchanged."
+      warn "Add the $_json_entries from the Workspace README by hand."
+    fi
+  elif _json_output=$("$_json_generator" "$_json_config") && \
+       printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
+    ok "Created $_json_config"
+  else
+    warn "Could not create $_json_config — $_json_entries were skipped"
+  fi
 }
 
-if _linked_provider_config .claude/settings.json; then
-  :
-elif ! command -v ruby >/dev/null 2>&1; then
-  warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
-elif [ -f .claude/settings.json ]; then
-  if _ensure_claude_settings .claude/settings.json; then
-    step ".claude/settings.json already exists (Workspace hooks ensured)"
-  else
-    warn "Couldn't parse .claude/settings.json — left it unchanged."
-    warn "Add the SessionStart and SessionEnd hooks from the Workspace README by hand."
-  fi
-elif _ensure_claude_settings .claude/settings.json; then
-  ok "Created .claude/settings.json"
-else
-  warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
-fi
+_ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude Code hooks"
 
 # ── Create T3 Code project scripts ──────────────────────────────
 #
@@ -652,10 +663,6 @@ _t3_project_json() {
     scripts = project["scripts"] ||= []
     raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
 
-    scripts.each do |script|
-      script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
-    end
-
     [
       { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure", "runOnWorktreeCreate" => true, "async" => false },
       { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
@@ -669,27 +676,8 @@ _t3_project_json() {
   ' "$1" 2>/dev/null
 }
 
-_ensure_t3_project() {
-  _t3_project_output=$(_t3_project_json "$1") || return 1
-  printf '%s\n' "$_t3_project_output" | _atomic_write "$1" 644
-}
-
-if _linked_provider_config t3.json; then
-  :
-elif ! command -v ruby >/dev/null 2>&1; then
-  warn "Ruby is not available — skipped T3 Code scripts in t3.json"
-elif [ -f t3.json ]; then
-  if _ensure_t3_project t3.json; then
-    step "t3.json already exists (Workspace scripts ensured)"
-  else
-    warn "Couldn't parse t3.json — left it unchanged."
-    warn "Add the Workspace scripts from the Workspace README by hand."
-  fi
-elif _ensure_t3_project t3.json; then
-  ok "Created t3.json"
-else
-  warn "Could not create t3.json — T3 Code scripts were skipped"
-fi
+_path_has_symlink_component t3.json || _use_project_workspace_entrypoint t3.json
+_ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
 
 # ── Add .workspace to .gitignore ────────────────────────────────
 

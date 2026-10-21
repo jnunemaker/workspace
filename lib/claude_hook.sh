@@ -75,6 +75,7 @@ resolve_workspace
 # bootstraps new worktrees. Without that script the hook still sets up.
 _claude_t3_owns_lifecycle() {
   [ -n "${T3CODE_CLI_PATH:-}" ] && [ -f t3.json ] || return 1
+  grep -q '"runOnWorktreeCreate"' t3.json || return 1
   command -v ruby >/dev/null 2>&1 || return 1
   ruby -rjson -e '
     scripts = JSON.parse(File.read("t3.json"))["scripts"]
@@ -83,7 +84,7 @@ _claude_t3_owns_lifecycle() {
     })
   ' 2>/dev/null
 }
-! _claude_t3_owns_lifecycle || exit 0
+if _claude_t3_owns_lifecycle; then exit 0; fi
 
 _claude_branch_marker="$_claude_git_dir/workspace-claude-branch"
 _claude_bootstrapping_marker="$_claude_git_dir/workspace-claude-bootstrapping"
