@@ -218,7 +218,7 @@ or merges into an existing one, with:
 - **Run**, **Workspace info**, and **Archive workspace** scripts that use
   `bin/workspace`.
 
-Existing keys and scripts are kept, exact legacy `workspace <command>` scripts
+Existing keys and scripts are kept, exact legacy `workspace <command>` script commands
 move to the shim, and each Workspace script is added only when no script
 already runs that command. An unparseable or linked `t3.json` is left
 unchanged. Merging needs Ruby; without it `workspace init` skips `t3.json`

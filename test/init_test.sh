@@ -479,11 +479,28 @@ assert_true "t3.json keeps existing scripts" ruby -rjson -e 'exit(JSON.parse(Fil
 assert_true "t3.json upgrades a legacy Workspace command in place" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts"); exit(scripts.count { |script| script["command"] == "bin/workspace run" } == 1 && scripts.any? { |script| script["name"] == "Dev" && script["command"] == "bin/workspace run" })'
 assert_true "t3.json gains the bootstrap script" grep -q '"bin/workspace bootstrap"' t3.json
 
+# An existing bootstrap script gains worktree-creation flags, and only script
+# commands are upgraded, never names or other fields.
+app_dir=$(create_fake_app "init-upgrade-t3-bootstrap")
+cd "$app_dir"
+cat > t3.json <<'EOF'
+{"scripts":[{"name":"workspace run","command":"workspace bootstrap"},{"name":"Fast","command":"workspace run","previewUrl":"workspace run"}]}
+EOF
+run_init
+assert_true "t3.json existing bootstrap runs on worktree creation before the agent" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts").select { |script| script["command"] == "bin/workspace bootstrap" }; exit(scripts.size == 1 && scripts.first["runOnWorktreeCreate"] == true && scripts.first["async"] == false)'
+assert_true "t3.json upgrades commands but not names or other fields" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts"); exit(scripts[0]["name"] == "workspace run" && scripts[1]["previewUrl"] == "workspace run")'
+
+app_dir=$(create_fake_app "init-upgrade-t3-async-bootstrap")
+cd "$app_dir"
+printf '{"scripts":[{"name":"Setup","command":"bin/workspace bootstrap","async":true}]}\n' > t3.json
+run_init
+assert_true "t3.json keeps an explicit async choice on an existing bootstrap" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").first; exit(script["runOnWorktreeCreate"] == true && script["async"] == true)'
+
 app_dir=$(create_fake_app "init-invalid-t3-project")
 cd "$app_dir"
-printf '{not json' > t3.json
+printf '{not json "workspace run"' > t3.json
 assert_true "init tolerates unparseable t3.json" run_init
-assert_equal "unparseable t3.json left unchanged" "{not json" "$(cat t3.json)"
+assert_equal "unparseable t3.json left unchanged" '{not json "workspace run"' "$(cat t3.json)"
 
 app_dir=$(create_fake_app "init-linked-t3-project")
 cd "$app_dir"

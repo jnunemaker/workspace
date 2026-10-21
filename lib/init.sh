@@ -650,7 +650,8 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 # with async false holds the agent until bootstrap exits, so agent sessions
 # T3 hosts never need to bootstrap from their own startup hooks. Existing
 # files are merged like .claude/settings.json: other keys and scripts are
-# preserved, legacy Workspace commands move to the shim, and each Workspace
+# preserved, legacy Workspace script commands move to the shim, an existing
+# bootstrap script is set to run on worktree creation, and each Workspace
 # script is added only when no script already runs that command.
 
 # Print t3.json with the Workspace scripts merged in, reading the existing
@@ -662,6 +663,18 @@ _t3_project_json() {
     raise "t3.json must be an object" unless Hash === project
     scripts = project["scripts"] ||= []
     raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
+
+    scripts.each do |script|
+      script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
+    end
+
+    # An existing bootstrap script must run on worktree creation, and holds
+    # the agent unless the project explicitly chose otherwise.
+    scripts.each do |script|
+      next unless script["command"] == "bin/workspace bootstrap"
+      script["runOnWorktreeCreate"] = true
+      script["async"] = false unless script.key?("async")
+    end
 
     [
       { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure", "runOnWorktreeCreate" => true, "async" => false },
@@ -676,7 +689,6 @@ _t3_project_json() {
   ' "$1" 2>/dev/null
 }
 
-_path_has_symlink_component t3.json || _use_project_workspace_entrypoint t3.json
 _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
 
 # ── Add .workspace to .gitignore ────────────────────────────────
