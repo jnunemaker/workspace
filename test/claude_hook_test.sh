@@ -280,8 +280,8 @@ rm -f "$worktree_git_dir/workspace-claude-bootstrapping"
 
 # T3 Code bootstraps worktrees with the first runOnWorktreeCreate script in
 # t3.json before Claude starts. Sessions it hosts skip the hook lifecycle when
-# that script is Workspace bootstrap and the worktree is set up (or T3 is
-# still bootstrapping asynchronously); anything else falls back to the hook.
+# that script is Workspace bootstrap holding the agent and the worktree is set
+# up; anything else falls back to the hook.
 t3_worktree_case() {
   t3_case_worktree="$TEST_TMP/claude-t3-$1"
   git -C "$hook_root" worktree add -q -b "t3/$1" "$t3_case_worktree"
@@ -315,7 +315,8 @@ assert_equal "session-start under T3 sets up a worktree T3 did not bootstrap" "$
 
 t3_worktree_case async "{\"scripts\":[$t3_bootstrap}]}"
 run_t3_hook "$t3_case_worktree"
-assert_equal "session-start under T3 does not race an asynchronous T3 bootstrap" "$((setups_before + 1))" "$(count_log setup)"
+assert_equal "session-start under T3 sets up when T3 bootstraps asynchronously" "$((setups_before + 2))" "$(count_log setup)"
+setups_before=$((setups_before + 1))
 
 t3_worktree_case other-setup "{\"scripts\":[{\"name\":\"Setup\",\"command\":\"bin/setup\",\"runOnWorktreeCreate\":true},$t3_bootstrap}]}"
 run_t3_hook "$t3_case_worktree"

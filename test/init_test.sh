@@ -492,9 +492,9 @@ assert_true "t3.json upgrades commands but not names or other fields" ruby -rjso
 
 app_dir=$(create_fake_app "init-upgrade-t3-async-bootstrap")
 cd "$app_dir"
-printf '{"scripts":[{"name":"Setup","command":"bin/workspace bootstrap","async":true}]}\n' > t3.json
+printf '{"scripts":[{"name":"Setup","command":"bin/workspace bootstrap","runOnWorktreeCreate":true,"async":true}]}\n' > t3.json
 run_init
-assert_true "t3.json keeps an explicit async choice on an existing bootstrap" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").first; exit(script["runOnWorktreeCreate"] == true && script["async"] == true)'
+assert_true "t3.json makes an asynchronous bootstrap setup hold the agent" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").first; exit(script["runOnWorktreeCreate"] == true && script["async"] == false)'
 
 # T3 runs only the first worktree setup script; init never displaces one the
 # project already runs and says so instead.

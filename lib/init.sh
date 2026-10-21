@@ -670,13 +670,16 @@ _t3_project_json() {
       script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
     end
 
+    # Workspace bootstrap as T3 setup must hold the agent: Claude hooks defer
+    # to it, and a hook bootstrap racing an asynchronous one would set up twice.
     bootstrap = { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure" }
     setup = scripts.find { |script| script["runOnWorktreeCreate"] == true }
     if setup.nil?
       bootstrap = scripts.find { |script| script["command"] == bootstrap["command"] } || bootstrap
       bootstrap["runOnWorktreeCreate"] = true
-      bootstrap["async"] = false unless bootstrap.key?("async")
+      setup = bootstrap
     end
+    setup["async"] = false if setup["command"] == bootstrap["command"]
 
     [
       bootstrap,
