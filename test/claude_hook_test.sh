@@ -299,6 +299,15 @@ setups_before=$(count_log setup)
 run_t3_hook "$t3_case_worktree"
 assert_equal "session-start leaves T3-bootstrapped worktrees to T3" "$setups_before" "$(count_log setup)"
 assert_false "session-start under T3 records no session branch" [ -f "$(git -C "$t3_case_worktree" rev-parse --absolute-git-dir)/workspace-claude-branch" ]
+t3_ready_worktree="$t3_case_worktree"
+
+# Archive unregisters but keeps the marker; the next T3 session sets it up again.
+(cd "$t3_ready_worktree" && PATH="$fake_bin:$PATH" WORKSPACE_TEST_LOG="$hook_log" \
+  sh "$WORKSPACE_HOME/lib/archive.sh") >/dev/null 2>&1
+assert_true "archived T3 worktree keeps its identity marker" [ -f "$t3_ready_worktree/.workspace" ]
+run_t3_hook "$t3_ready_worktree"
+assert_equal "session-start under T3 restores an archived worktree" "$((setups_before + 1))" "$(count_log setup)"
+setups_before=$((setups_before + 1))
 
 t3_worktree_case existing "{\"scripts\":[$t3_bootstrap,\"async\":false}]}"
 run_t3_hook "$t3_case_worktree"

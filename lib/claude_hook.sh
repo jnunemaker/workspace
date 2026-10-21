@@ -72,19 +72,32 @@ resolve_workspace
 # T3 Code runs the first t3.json runOnWorktreeCreate script itself when it
 # creates a worktree, and it gives Claude only a short time to start, which a
 # full bootstrap in this hook outlasts. When that script is Workspace
-# bootstrap, sessions T3 hosts leave the lifecycle to T3 once the worktree is
-# set up, or while T3 is still bootstrapping it asynchronously. A worktree T3
-# did not set up (an existing checkout, or project scripts overridden in T3)
-# falls through to the normal hook.
+# bootstrap, sessions T3 hosts leave the lifecycle to T3 while it bootstraps
+# asynchronously, or once the worktree is set up by the same marker and
+# registration test bootstrap --once uses (archive unregisters but keeps the
+# marker). A worktree T3 did not set up (an existing checkout, an archived
+# one, or project scripts overridden in T3) falls through to the normal hook.
 _claude_t3_owns_lifecycle() {
   [ -n "${T3CODE_CLI_PATH:-}" ] && [ -f t3.json ] || return 1
   grep -q '"runOnWorktreeCreate"' t3.json || return 1
   command -v ruby >/dev/null 2>&1 || return 1
-  ruby -rjson -e '
+  _claude_t3_setup=$(ruby -rjson -e '
     scripts = JSON.parse(File.read("t3.json"))["scripts"]
     setup = Array === scripts && scripts.find { |script| Hash === script && script["runOnWorktreeCreate"] == true }
-    exit(!!setup && setup["command"] == "bin/workspace bootstrap" && (setup["async"] != false || File.exist?(".workspace")))
-  ' 2>/dev/null
+    print(setup["async"] == false ? "blocking" : "async") if setup && setup["command"] == "bin/workspace bootstrap"
+  ' 2>/dev/null) || return 1
+  case "$_claude_t3_setup" in
+    async) return 0 ;;
+    blocking)
+      [ -e .workspace ] || return 1
+      (
+        . "$WORKSPACE_LIB/registry.sh"
+        sanitize_workspace_name
+        resolve_workspace_identity && workspace_is_registered
+      ) 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
 }
 if _claude_t3_owns_lifecycle; then exit 0; fi
 

@@ -232,7 +232,8 @@ project without scripts of its own in T3's settings.
 T3 gives an agent only a short time to start, and a full bootstrap in a
 Claude `SessionStart` hook can outlast it. So when T3 hosts a Claude session
 (`T3CODE_CLI_PATH` is set) and T3's setup script is Workspace bootstrap, the
-Claude hooks leave the lifecycle to T3 once the worktree is set up, or while
+Claude hooks leave the lifecycle to T3 once the worktree is set up (marker and
+registration, as `bootstrap --once` checks), or while
 T3 bootstraps it with `async` left on. A worktree T3 did not set up, such as
 an existing checkout or a project whose scripts are overridden in T3's
 settings, still gets the normal hooks.
