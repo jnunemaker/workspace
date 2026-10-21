@@ -69,19 +69,21 @@ resolve_workspace
 [ "$WORKSPACE_PROVIDER" = "git" ] || exit 0
 [ -x bin/workspace ] || exit 0
 
-# T3 Code runs the t3.json setup script itself when it creates a worktree, and
-# it gives Claude only a short time to start, which a full bootstrap in this
-# hook outlasts. Sessions T3 hosts leave the lifecycle to T3 whenever t3.json
-# bootstraps new worktrees. Without that script the hook still sets up.
+# T3 Code runs the first t3.json runOnWorktreeCreate script itself when it
+# creates a worktree, and it gives Claude only a short time to start, which a
+# full bootstrap in this hook outlasts. When that script is Workspace
+# bootstrap, sessions T3 hosts leave the lifecycle to T3 once the worktree is
+# set up, or while T3 is still bootstrapping it asynchronously. A worktree T3
+# did not set up (an existing checkout, or project scripts overridden in T3)
+# falls through to the normal hook.
 _claude_t3_owns_lifecycle() {
   [ -n "${T3CODE_CLI_PATH:-}" ] && [ -f t3.json ] || return 1
   grep -q '"runOnWorktreeCreate"' t3.json || return 1
   command -v ruby >/dev/null 2>&1 || return 1
   ruby -rjson -e '
     scripts = JSON.parse(File.read("t3.json"))["scripts"]
-    exit(Array === scripts && scripts.any? { |script|
-      Hash === script && script["command"] == "bin/workspace bootstrap" && script["runOnWorktreeCreate"] == true
-    })
+    setup = Array === scripts && scripts.find { |script| Hash === script && script["runOnWorktreeCreate"] == true }
+    exit(!!setup && setup["command"] == "bin/workspace bootstrap" && (setup["async"] != false || File.exist?(".workspace")))
   ' 2>/dev/null
 }
 if _claude_t3_owns_lifecycle; then exit 0; fi

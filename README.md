@@ -218,18 +218,24 @@ or merges into an existing one, with:
 - **Run**, **Workspace info**, and **Archive workspace** scripts that use
   `bin/workspace`.
 
-Existing keys and scripts are kept, exact legacy `workspace <command>` script commands
-move to the shim, and each Workspace script is added only when no script
-already runs that command. An unparseable or linked `t3.json` is left
-unchanged. Merging needs Ruby; without it `workspace init` skips `t3.json`
-with a warning. Commit the file so T3 picks it up; T3 uses its scripts for any
+Existing keys and scripts are kept, exact legacy `workspace <command>` script
+commands move to the shim, and each Workspace script is added only when no
+script already runs that command. T3 runs only the first
+`runOnWorktreeCreate` script, so when the project already runs a different
+one, init adds bootstrap as a plain script and warns instead of displacing it;
+have that script run `bin/workspace bootstrap`. An unparseable or linked
+`t3.json`, or one that would exceed T3's 50-script limit, is left unchanged.
+Merging needs Ruby; without it `workspace init` skips `t3.json` with a
+warning. Commit the file so T3 picks it up; T3 uses its scripts for any
 project without scripts of its own in T3's settings.
 
 T3 gives an agent only a short time to start, and a full bootstrap in a
 Claude `SessionStart` hook can outlast it. So when T3 hosts a Claude session
-(`T3CODE_CLI_PATH` is set) and `t3.json` bootstraps new worktrees, the Claude
-hooks leave the lifecycle to T3 and exit immediately. Without that script the
-hooks still set up the worktree.
+(`T3CODE_CLI_PATH` is set) and T3's setup script is Workspace bootstrap, the
+Claude hooks leave the lifecycle to T3 once the worktree is set up, or while
+T3 bootstraps it with `async` left on. A worktree T3 did not set up, such as
+an existing checkout or a project whose scripts are overridden in T3's
+settings, still gets the normal hooks.
 
 T3 has no teardown script. Run **Archive workspace** before deleting a thread's
 worktree, or let the shared Git registry clean up after T3 removes it: the

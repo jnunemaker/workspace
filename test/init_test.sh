@@ -496,6 +496,23 @@ printf '{"scripts":[{"name":"Setup","command":"bin/workspace bootstrap","async":
 run_init
 assert_true "t3.json keeps an explicit async choice on an existing bootstrap" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").first; exit(script["runOnWorktreeCreate"] == true && script["async"] == true)'
 
+# T3 runs only the first worktree setup script; init never displaces one the
+# project already runs and says so instead.
+app_dir=$(create_fake_app "init-t3-other-setup")
+cd "$app_dir"
+printf '{"scripts":[{"name":"Setup","command":"bin/setup","runOnWorktreeCreate":true}]}\n' > t3.json
+t3_other_setup_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_true "t3.json keeps the project's setup script first" ruby -rjson -e 'setup = JSON.parse(File.read("t3.json")).fetch("scripts").find { |script| script["runOnWorktreeCreate"] }; exit(setup["command"] == "bin/setup")'
+assert_true "t3.json adds bootstrap as a plain script beside another setup script" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").find { |script| script["command"] == "bin/workspace bootstrap" }; exit(script && !script.key?("runOnWorktreeCreate"))'
+assert_true "init warns when another script is T3's setup" sh -c 'case "$1" in *"already runs \"Setup\""*) exit 0;; *) exit 1;; esac' sh "$t3_other_setup_output"
+
+app_dir=$(create_fake_app "init-t3-script-limit")
+cd "$app_dir"
+ruby -rjson -e 'puts JSON.generate("scripts" => (1..48).map { |n| { "name" => "s#{n}", "command" => "echo #{n}" } })' > t3.json
+t3_limit_before=$(cat t3.json)
+run_init
+assert_equal "t3.json over T3's script limit is left unchanged" "$t3_limit_before" "$(cat t3.json)"
+
 app_dir=$(create_fake_app "init-invalid-t3-project")
 cd "$app_dir"
 printf '{not json "workspace run"' > t3.json

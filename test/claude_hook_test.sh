@@ -278,24 +278,46 @@ wait "$overlap_start" 2>/dev/null || true
 assert_equal "finished setup keeps another session's marker" "424242" "$(cat "$worktree_git_dir/workspace-claude-bootstrapping" 2>/dev/null)"
 rm -f "$worktree_git_dir/workspace-claude-bootstrapping"
 
-# T3 Code bootstraps worktrees from t3.json before Claude starts, so sessions
-# it hosts skip the hook lifecycle; without that script the hook still sets up.
-t3_worktree="$TEST_TMP/claude-t3-worktree"
-git -C "$hook_root" worktree add -q -b t3/feature "$t3_worktree"
-cat > "$t3_worktree/t3.json" <<'EOF'
-{"scripts":[{"name":"Bootstrap workspace","command":"bin/workspace bootstrap","runOnWorktreeCreate":true,"async":false}]}
-EOF
-setups_before=$(count_log setup)
-(export T3CODE_CLI_PATH=/usr/local/bin/t3; run_hook session-start "$t3_worktree") >/dev/null 2>&1
-assert_equal "session-start leaves T3-bootstrapped worktrees to T3" "$setups_before" "$(count_log setup)"
-assert_false "session-start under T3 records no session branch" [ -f "$(git -C "$t3_worktree" rev-parse --absolute-git-dir)/workspace-claude-branch" ]
-run_hook session-start "$t3_worktree" >/dev/null 2>&1
-assert_equal "session-start outside T3 still bootstraps" "$((setups_before + 1))" "$(count_log setup)"
+# T3 Code bootstraps worktrees with the first runOnWorktreeCreate script in
+# t3.json before Claude starts. Sessions it hosts skip the hook lifecycle when
+# that script is Workspace bootstrap and the worktree is set up (or T3 is
+# still bootstrapping asynchronously); anything else falls back to the hook.
+t3_worktree_case() {
+  t3_case_worktree="$TEST_TMP/claude-t3-$1"
+  git -C "$hook_root" worktree add -q -b "t3/$1" "$t3_case_worktree"
+  printf '%s\n' "$2" > "$t3_case_worktree/t3.json"
+}
+run_t3_hook() {
+  (export T3CODE_CLI_PATH=/usr/local/bin/t3; run_hook session-start "$1") >/dev/null 2>&1
+}
+t3_bootstrap='{"name":"Bootstrap workspace","command":"bin/workspace bootstrap","runOnWorktreeCreate":true'
 
-t3_manual_worktree="$TEST_TMP/claude-t3-manual-worktree"
-git -C "$hook_root" worktree add -q -b t3/manual "$t3_manual_worktree"
-printf '{"scripts":[{"name":"Bootstrap workspace","command":"bin/workspace bootstrap"}]}\n' > "$t3_manual_worktree/t3.json"
-(export T3CODE_CLI_PATH=/usr/local/bin/t3; run_hook session-start "$t3_manual_worktree") >/dev/null 2>&1
-assert_equal "session-start under T3 bootstraps without a worktree setup script" "$((setups_before + 2))" "$(count_log setup)"
+t3_worktree_case ready "{\"scripts\":[$t3_bootstrap,\"async\":false}]}"
+(cd "$t3_case_worktree" && PATH="$fake_bin:$PATH" WORKSPACE_TEST_LOG="$hook_log" \
+  sh "$WORKSPACE_HOME/lib/bootstrap.sh") >/dev/null 2>&1
+setups_before=$(count_log setup)
+run_t3_hook "$t3_case_worktree"
+assert_equal "session-start leaves T3-bootstrapped worktrees to T3" "$setups_before" "$(count_log setup)"
+assert_false "session-start under T3 records no session branch" [ -f "$(git -C "$t3_case_worktree" rev-parse --absolute-git-dir)/workspace-claude-branch" ]
+
+t3_worktree_case existing "{\"scripts\":[$t3_bootstrap,\"async\":false}]}"
+run_t3_hook "$t3_case_worktree"
+assert_equal "session-start under T3 sets up a worktree T3 did not bootstrap" "$((setups_before + 1))" "$(count_log setup)"
+
+t3_worktree_case async "{\"scripts\":[$t3_bootstrap}]}"
+run_t3_hook "$t3_case_worktree"
+assert_equal "session-start under T3 does not race an asynchronous T3 bootstrap" "$((setups_before + 1))" "$(count_log setup)"
+
+t3_worktree_case other-setup "{\"scripts\":[{\"name\":\"Setup\",\"command\":\"bin/setup\",\"runOnWorktreeCreate\":true},$t3_bootstrap}]}"
+run_t3_hook "$t3_case_worktree"
+assert_equal "session-start under T3 bootstraps when another script is T3's setup" "$((setups_before + 2))" "$(count_log setup)"
+
+t3_worktree_case manual '{"scripts":[{"name":"Bootstrap workspace","command":"bin/workspace bootstrap"}]}'
+run_t3_hook "$t3_case_worktree"
+assert_equal "session-start under T3 bootstraps without a worktree setup script" "$((setups_before + 3))" "$(count_log setup)"
+
+t3_worktree_case outside "{\"scripts\":[$t3_bootstrap}]}"
+run_hook session-start "$t3_case_worktree" >/dev/null 2>&1
+assert_equal "session-start outside T3 still bootstraps" "$((setups_before + 4))" "$(count_log setup)"
 
 report "claude-hook"

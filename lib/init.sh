@@ -631,7 +631,7 @@ _ensure_json_provider_config() {
        printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
       step "$_json_config already exists ($_json_entries ensured)"
     else
-      warn "Couldn't parse $_json_config — left it unchanged."
+      warn "Couldn't update $_json_config — left it unchanged."
       warn "Add the $_json_entries from the Workspace README by hand."
     fi
   elif _json_output=$("$_json_generator" "$_json_config") && \
@@ -646,13 +646,15 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 
 # ── Create T3 Code project scripts ──────────────────────────────
 #
-# T3 Code reads t3.json from the repository root. A runOnWorktreeCreate script
-# with async false holds the agent until bootstrap exits, so agent sessions
-# T3 hosts never need to bootstrap from their own startup hooks. Existing
-# files are merged like .claude/settings.json: other keys and scripts are
-# preserved, legacy Workspace script commands move to the shim, an existing
-# bootstrap script is set to run on worktree creation, and each Workspace
-# script is added only when no script already runs that command.
+# T3 Code reads t3.json from the repository root. When it creates a worktree
+# it runs only the first runOnWorktreeCreate script, and async false holds the
+# agent until that script exits, so agent sessions T3 hosts never need to
+# bootstrap from their own startup hooks. Existing files are merged like
+# .claude/settings.json: other keys and scripts are preserved, legacy
+# Workspace script commands move to the shim, and each Workspace script is
+# added only when no script already runs that command. Bootstrap becomes the
+# setup script unless the project already runs another one, which init
+# reports instead of replacing. T3 rejects files with more than 50 scripts.
 
 # Print t3.json with the Workspace scripts merged in, reading the existing
 # file when present. Fails, printing nothing, on unparseable input.
@@ -668,28 +670,41 @@ _t3_project_json() {
       script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
     end
 
-    # An existing bootstrap script must run on worktree creation, and holds
-    # the agent unless the project explicitly chose otherwise.
-    scripts.each do |script|
-      next unless script["command"] == "bin/workspace bootstrap"
-      script["runOnWorktreeCreate"] = true
-      script["async"] = false unless script.key?("async")
+    bootstrap = { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure" }
+    setup = scripts.find { |script| script["runOnWorktreeCreate"] == true }
+    if setup.nil?
+      bootstrap = scripts.find { |script| script["command"] == bootstrap["command"] } || bootstrap
+      bootstrap["runOnWorktreeCreate"] = true
+      bootstrap["async"] = false unless bootstrap.key?("async")
     end
 
     [
-      { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure", "runOnWorktreeCreate" => true, "async" => false },
+      bootstrap,
       { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
       { "name" => "Workspace info", "command" => "bin/workspace info", "icon" => "debug" },
       { "name" => "Archive workspace", "command" => "bin/workspace archive", "icon" => "build" }
     ].each do |workspace_script|
       scripts << workspace_script unless scripts.any? { |script| script["command"] == workspace_script["command"] }
     end
+    raise "T3 Code allows at most 50 scripts" if scripts.size > 50
 
     print JSON.pretty_generate(project) + "\n"
   ' "$1" 2>/dev/null
 }
 
 _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
+
+if [ -f t3.json ] && ! _path_has_symlink_component t3.json && command -v ruby >/dev/null 2>&1; then
+  _t3_other_setup=$(ruby -rjson -e '
+    scripts = JSON.parse(File.read("t3.json"))["scripts"]
+    setup = Array === scripts && scripts.find { |script| Hash === script && script["runOnWorktreeCreate"] == true }
+    print setup["name"] if setup && setup["command"] != "bin/workspace bootstrap"
+  ' 2>/dev/null || true)
+  if [ -n "$_t3_other_setup" ]; then
+    warn "t3.json already runs \"$_t3_other_setup\" when T3 Code creates a worktree."
+    warn "Have it run bin/workspace bootstrap so new T3 worktrees are set up."
+  fi
+fi
 
 # ── Add .workspace to .gitignore ────────────────────────────────
 
