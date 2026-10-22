@@ -669,9 +669,10 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 # than 50 scripts.
 
 # Print t3.json with the Workspace scripts merged in, reading the existing
-# file when present. Fails, printing nothing, on unparseable input. With
-# "notices" as the second argument, print instead the notices the merge
-# raises for the user, one per line.
+# file when present. Fails, printing nothing, on unparseable input or when
+# the merge is refused. With "notices" as the second argument, it instead
+# prints the notices the merge raises for the user, one per line, and always
+# succeeds: unparseable input prints none, and a refused merge prints why.
 _t3_project_json() {
   ruby -rjson -e '
     path, mode = ARGV

@@ -545,10 +545,12 @@ assert_equal "unparseable t3.json left unchanged" '{not json "workspace run"' "$
 
 app_dir=$(create_fake_app "init-linked-t3-project")
 cd "$app_dir"
-printf '{}\n' > "$TEST_TMP/linked-t3.json"
+t3_linked_project='{"scripts":[{"name":"Setup","command":"bin/setup","runOnWorktreeCreate":true}]}'
+printf '%s\n' "$t3_linked_project" > "$TEST_TMP/linked-t3.json"
 ln -s "$TEST_TMP/linked-t3.json" t3.json
-run_init
-assert_equal "linked t3.json left unchanged" "{}" "$(cat "$TEST_TMP/linked-t3.json")"
+t3_linked_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_equal "linked t3.json left unchanged" "$t3_linked_project" "$(cat "$TEST_TMP/linked-t3.json")"
+assert_false "init gives no setup advice for a linked t3.json" sh -c 'case "$1" in *"already runs"*) exit 0;; *) exit 1;; esac' sh "$t3_linked_output"
 
 # Claude Code hooks need Ruby to merge JSON; without it init still succeeds.
 app_dir=$(create_fake_app "init-without-ruby")
