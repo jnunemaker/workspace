@@ -522,11 +522,6 @@ t3_unwritable_output=$(PATH="$t3_failing_mv:$PATH" sh "$WORKSPACE_HOME/lib/init.
 assert_true "init reports a t3.json it could not write" sh -c 'case "$1" in *"Couldn'"'"'t update t3.json"*) exit 0;; *) exit 1;; esac' sh "$t3_unwritable_output"
 assert_false "init gives no setup advice for a t3.json it could not write" sh -c 'case "$1" in *"already runs"*) exit 0;; *) exit 1;; esac' sh "$t3_unwritable_output"
 
-app_dir=$(create_fake_app "init-t3-without-temporary-files")
-cd "$app_dir"
-TMPDIR="$app_dir/missing" sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1 || true
-assert_true "init writes t3.json without a temporary directory" grep -q '"bin/workspace bootstrap"' t3.json
-
 app_dir=$(create_fake_app "init-t3-unnamed-other-setup")
 cd "$app_dir"
 printf '{"scripts":[{"command":"bin/setup","runOnWorktreeCreate":true},{"name":"Odd","command":["npm","test"]}]}\n' > t3.json

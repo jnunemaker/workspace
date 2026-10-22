@@ -614,7 +614,8 @@ _claude_settings_json() {
 # Merge Workspace entries into a JSON provider config with a Ruby generator
 # that prints the merged file, creating the file when it is missing. Linked,
 # unparseable, or Ruby-less configs are left unchanged with a warning. Returns
-# 1 only when the merged file could not be written.
+# 1 only when the generator succeeded but its output could not be written, so
+# callers can tell a refused merge from a failed write.
 _ensure_json_provider_config() {
   _json_config="$1"
   _json_generator="$2"
@@ -627,30 +628,28 @@ _ensure_json_provider_config() {
     return 0
   fi
 
-  if ! _json_output=$("$_json_generator" "$_json_config"); then
-    if [ -f "$_json_config" ]; then
-      warn "Couldn't update $_json_config — left it unchanged."
-      warn "Add the $_json_entries from the Workspace README by hand."
-    else
-      warn "Could not create $_json_config — $_json_entries were skipped"
-    fi
-    return 0
-  fi
-
-  if [ -f "$_json_config" ]; then
+  _json_existed=false
+  [ ! -f "$_json_config" ] || _json_existed=true
+  _json_status=0
+  if _json_output=$("$_json_generator" "$_json_config"); then
     if printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
-      step "$_json_config already exists ($_json_entries ensured)"
+      if [ "$_json_existed" = true ]; then
+        step "$_json_config already exists ($_json_entries ensured)"
+      else
+        ok "Created $_json_config"
+      fi
       return 0
     fi
+    _json_status=1
+  fi
+
+  if [ "$_json_existed" = true ]; then
     warn "Couldn't update $_json_config — left it unchanged."
     warn "Add the $_json_entries from the Workspace README by hand."
-  elif printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
-    ok "Created $_json_config"
-    return 0
   else
     warn "Could not create $_json_config — $_json_entries were skipped"
   fi
-  return 1
+  return "$_json_status"
 }
 
 _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude Code hooks" || :
@@ -670,11 +669,12 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 # than 50 scripts.
 
 # Print t3.json with the Workspace scripts merged in, reading the existing
-# file when present. Fails, printing nothing, on unparseable input. Notices
-# for the user are written, one per line, to $_t3_notices.
+# file when present. Fails, printing nothing, on unparseable input. With
+# "notices" as the second argument, print instead the notices the merge
+# raises for the user, one per line.
 _t3_project_json() {
   ruby -rjson -e '
-    path, notices_path = ARGV
+    path, mode = ARGV
     notices = []
     begin
       project = File.exist?(path) ? JSON.parse(File.read(path)) : { "$schema" => "https://t3.codes/schema/t3.json" }
@@ -717,24 +717,28 @@ _t3_project_json() {
 
       output = JSON.pretty_generate(project) + "\n"
     rescue StandardError
-      File.write(notices_path, notices.map { |notice| notice + "\n" }.join)
+      output = nil
+    end
+    if mode == "notices"
+      notices.each { |notice| puts notice }
+    elsif output
+      print output
+    else
       exit 1
     end
-    File.write(notices_path, notices.map { |notice| notice + "\n" }.join)
-    print output
-  ' "$1" "$_t3_notices" 2>/dev/null
+  ' "$@" 2>/dev/null
 }
 
-# Notices are dropped when no temporary file is available; t3.json is still
-# merged. They describe the merged file, so they are shown only once it is
-# written, or when they explain why the merge was refused.
-_t3_notices=$(mktemp "${TMPDIR:-/tmp}/workspace-init-t3.XXXXXX" 2>/dev/null) || _t3_notices=/dev/null
+# The notices describe the merged file, so they are shown only once it is
+# written, or when they explain why the merge was refused. A linked t3.json is
+# never merged and gets none.
+_t3_notices=""
+_path_has_symlink_component t3.json || _t3_notices=$(_t3_project_json t3.json notices || true)
 if _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"; then
-  while IFS= read -r _t3_notice; do
-    warn "$_t3_notice"
-  done < "$_t3_notices"
+  printf '%s\n' "$_t3_notices" | while IFS= read -r _t3_notice; do
+    [ -z "$_t3_notice" ] || warn "$_t3_notice"
+  done
 fi
-[ "$_t3_notices" = /dev/null ] || rm -f "$_t3_notices"
 
 # ── Add .workspace to .gitignore ────────────────────────────────
 
