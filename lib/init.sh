@@ -648,65 +648,80 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 #
 # T3 Code reads t3.json from the repository root. When it creates a worktree
 # it runs only the first runOnWorktreeCreate script, and async false holds the
-# agent until that script exits, so agent sessions T3 hosts never need to
-# bootstrap from their own startup hooks. Existing files are merged like
-# .claude/settings.json: other keys and scripts are preserved, legacy
-# Workspace script commands move to the shim, and each Workspace script is
-# added only when no script already runs that command. Bootstrap becomes the
-# setup script unless the project already runs another one, which init
-# reports instead of replacing. T3 rejects files with more than 50 scripts.
+# agent until that script exits. Bootstrap must hold the agent: otherwise the
+# agent's own startup hooks race T3's bootstrap, and a Claude SessionStart hook
+# running a full bootstrap can outlast T3's agent start timeout. Existing
+# files are merged like .claude/settings.json: other keys and scripts are
+# preserved, legacy Workspace script commands move to the shim, and each
+# Workspace script is added only when no script already runs that command.
+# Bootstrap becomes the setup script unless the project already runs another
+# one, which init reports instead of replacing. T3 rejects files with more
+# than 50 scripts.
 
 # Print t3.json with the Workspace scripts merged in, reading the existing
-# file when present. Fails, printing nothing, on unparseable input.
+# file when present. Fails, printing nothing, on unparseable input. Notices
+# for the user are written, one per line, to $_t3_notices.
 _t3_project_json() {
   ruby -rjson -e '
-    path = ARGV.fetch(0)
-    project = File.exist?(path) ? JSON.parse(File.read(path)) : { "$schema" => "https://t3.codes/schema/t3.json" }
-    raise "t3.json must be an object" unless Hash === project
-    scripts = project["scripts"] ||= []
-    raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
+    path, notices_path = ARGV
+    notices = []
+    begin
+      project = File.exist?(path) ? JSON.parse(File.read(path)) : { "$schema" => "https://t3.codes/schema/t3.json" }
+      raise "t3.json must be an object" unless Hash === project
+      scripts = project["scripts"] ||= []
+      raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
 
-    scripts.each do |script|
-      script["command"] = "bin/" + script["command"] if script["command"] =~ /\Aworkspace (bootstrap|run|info|archive)\z/
+      scripts.each do |script|
+        command = script["command"]
+        script["command"] = "bin/" + command if String === command && command =~ /\Aworkspace (bootstrap|run|info|archive)\z/
+      end
+
+      bootstrap = { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure" }
+      setup = scripts.find { |script| script["runOnWorktreeCreate"] == true }
+      if setup.nil?
+        bootstrap = scripts.find { |script| script["command"] == bootstrap["command"] } || bootstrap
+        bootstrap["runOnWorktreeCreate"] = true
+        setup = bootstrap
+      end
+      if setup["command"] == bootstrap["command"]
+        setup["async"] = false
+      else
+        label = [setup["name"], setup["command"]].find { |value| String === value && !value.empty? } || "another script"
+        notices << "t3.json already runs \"#{label}\" when T3 Code creates a worktree."
+        notices << "Have it run bin/workspace bootstrap so new T3 worktrees are set up."
+      end
+
+      [
+        bootstrap,
+        { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
+        { "name" => "Workspace info", "command" => "bin/workspace info", "icon" => "debug" },
+        { "name" => "Archive workspace", "command" => "bin/workspace archive", "icon" => "build" }
+      ].each do |workspace_script|
+        scripts << workspace_script unless scripts.any? { |script| script["command"] == workspace_script["command"] }
+      end
+      if scripts.size > 50
+        notices = ["Adding the Workspace scripts would put t3.json over T3 Code'"'"'s 50-script limit; remove unused scripts first."]
+        raise "too many scripts"
+      end
+
+      output = JSON.pretty_generate(project) + "\n"
+    rescue StandardError
+      File.write(notices_path, notices.map { |notice| notice + "\n" }.join)
+      exit 1
     end
-
-    # Workspace bootstrap as T3 setup must hold the agent: Claude hooks defer
-    # to it, and a hook bootstrap racing an asynchronous one would set up twice.
-    bootstrap = { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure" }
-    setup = scripts.find { |script| script["runOnWorktreeCreate"] == true }
-    if setup.nil?
-      bootstrap = scripts.find { |script| script["command"] == bootstrap["command"] } || bootstrap
-      bootstrap["runOnWorktreeCreate"] = true
-      setup = bootstrap
-    end
-    setup["async"] = false if setup["command"] == bootstrap["command"]
-
-    [
-      bootstrap,
-      { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
-      { "name" => "Workspace info", "command" => "bin/workspace info", "icon" => "debug" },
-      { "name" => "Archive workspace", "command" => "bin/workspace archive", "icon" => "build" }
-    ].each do |workspace_script|
-      scripts << workspace_script unless scripts.any? { |script| script["command"] == workspace_script["command"] }
-    end
-    raise "T3 Code allows at most 50 scripts" if scripts.size > 50
-
-    print JSON.pretty_generate(project) + "\n"
-  ' "$1" 2>/dev/null
+    File.write(notices_path, notices.map { |notice| notice + "\n" }.join)
+    print output
+  ' "$1" "$_t3_notices" 2>/dev/null
 }
 
-_ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
-
-if [ -f t3.json ] && ! _path_has_symlink_component t3.json && command -v ruby >/dev/null 2>&1; then
-  _t3_other_setup=$(ruby -rjson -e '
-    scripts = JSON.parse(File.read("t3.json"))["scripts"]
-    setup = Array === scripts && scripts.find { |script| Hash === script && script["runOnWorktreeCreate"] == true }
-    print setup["name"] if setup && setup["command"] != "bin/workspace bootstrap"
-  ' 2>/dev/null || true)
-  if [ -n "$_t3_other_setup" ]; then
-    warn "t3.json already runs \"$_t3_other_setup\" when T3 Code creates a worktree."
-    warn "Have it run bin/workspace bootstrap so new T3 worktrees are set up."
-  fi
+if _t3_notices=$(mktemp "${TMPDIR:-/tmp}/workspace-init-t3.XXXXXX"); then
+  _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
+  while IFS= read -r _t3_notice; do
+    warn "$_t3_notice"
+  done < "$_t3_notices"
+  rm -f "$_t3_notices"
+else
+  warn "Could not create a temporary file — skipped T3 Code scripts in t3.json"
 fi
 
 # ── Add .workspace to .gitignore ────────────────────────────────

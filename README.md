@@ -191,8 +191,10 @@ Leaving its databases behind is safer than dropping them; run
 unregisters the worktree, so if you resume it later the SessionStart hook sets
 it up again.
 
-Sessions hosted by T3 Code skip both hooks when `t3.json` bootstraps new
-worktrees; see [T3 Code worktrees](#t3-code-worktrees).
+In T3 Code, `t3.json` bootstraps new worktrees before the agent starts, so
+the SessionStart hook finds them set up and returns at once; a worktree T3 did
+not bootstrap still gets the full bootstrap from the hook. See
+[T3 Code worktrees](#t3-code-worktrees).
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs
@@ -230,14 +232,11 @@ warning. Commit the file so T3 picks it up; T3 uses its scripts for any
 project without scripts of its own in T3's settings.
 
 T3 gives an agent only a short time to start, and a full bootstrap in a
-Claude `SessionStart` hook can outlast it. So when T3 hosts a Claude session
-(`T3CODE_CLI_PATH` is set), T3's setup script is Workspace bootstrap with
-`async: false`, and the worktree is set up (marker and registration, as
-`bootstrap --once` checks), the Claude hooks leave the lifecycle to T3. A
-worktree T3 did not set up, such as an existing checkout, an archived one, or
-a project whose scripts are overridden in T3's settings, still gets the normal
-hooks. `workspace init` keeps that script at `async: false`: with `async`
-on, the agent and its hook could start a second bootstrap alongside T3's.
+Claude `SessionStart` hook can outlast it. With bootstrap as T3's setup
+script and `async: false`, T3 finishes setup before the agent starts, so the
+hook's `bootstrap --once` finds the worktree set up and returns at once.
+`workspace init` keeps that script at `async: false`: with `async` on, the
+agent's hook could start a second bootstrap alongside T3's.
 
 T3 has no teardown script. Run **Archive workspace** before deleting a thread's
 worktree, or let the shared Git registry clean up after T3 removes it: the
