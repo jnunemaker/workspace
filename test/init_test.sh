@@ -123,6 +123,16 @@ claude_settings_before=$(cat .claude/settings.json)
 run_init
 assert_equal "claude settings unchanged on re-init" "$claude_settings_before" "$(cat .claude/settings.json)"
 
+# ── T3 Code project scripts ───────────────────────────────────────
+
+assert_true "t3.json created" [ -f t3.json ]
+assert_true "t3.json declares its schema" ruby -rjson -e 'exit(JSON.parse(File.read("t3.json"))["$schema"] == "https://t3.codes/schema/t3.json")'
+assert_true "t3.json bootstraps new worktrees before the agent starts" ruby -rjson -e 'exit(JSON.parse(File.read("t3.json")).fetch("scripts").any? { |script| script["command"] == "bin/workspace bootstrap" && script["runOnWorktreeCreate"] == true && script["async"] == false })'
+assert_true "t3.json has shim run, info, and archive scripts" ruby -rjson -e 'commands = JSON.parse(File.read("t3.json")).fetch("scripts").map { |script| script["command"] }; exit(["bin/workspace run", "bin/workspace info", "bin/workspace archive"].all? { |command| commands.include?(command) })'
+t3_project_before=$(cat t3.json)
+run_init
+assert_equal "t3.json unchanged on re-init" "$t3_project_before" "$(cat t3.json)"
+
 cleanup_command=$(codex_cleanup_command .codex/environments/environment.toml)
 assert_true "native cleanup quotes the resolved worktree path" sh -c 'case "$1" in *"cd \"\$workspace_cleanup_path\""*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
 assert_false "native cleanup does not derive identity from the worktree path" sh -c 'case "$1" in *WORKSPACE_NAME*|*WORKSPACE_DB_SUFFIX*) exit 0;; *) exit 1;; esac' sh "$cleanup_command"
@@ -457,6 +467,92 @@ printf '{not json' > .claude/settings.json
 assert_true "init tolerates unparseable claude settings" run_init
 assert_equal "unparseable claude settings left unchanged" "{not json" "$(cat .claude/settings.json)"
 
+# Existing T3 Code project files are merged rather than replaced.
+app_dir=$(create_fake_app "init-merge-t3-project")
+cd "$app_dir"
+cat > t3.json <<'EOF'
+{"defaultThreadEnvMode":"worktree","scripts":[{"name":"Test","command":"bin/rails test","icon":"test"},{"name":"Dev","command":"workspace run"}]}
+EOF
+run_init
+assert_true "t3.json keeps existing keys" ruby -rjson -e 'exit(JSON.parse(File.read("t3.json"))["defaultThreadEnvMode"] == "worktree")'
+assert_true "t3.json keeps existing scripts" ruby -rjson -e 'exit(JSON.parse(File.read("t3.json")).fetch("scripts").first == { "name" => "Test", "command" => "bin/rails test", "icon" => "test" })'
+assert_true "t3.json upgrades a legacy Workspace command in place" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts"); exit(scripts.count { |script| script["command"] == "bin/workspace run" } == 1 && scripts.any? { |script| script["name"] == "Dev" && script["command"] == "bin/workspace run" })'
+assert_true "t3.json gains the bootstrap script" grep -q '"bin/workspace bootstrap"' t3.json
+
+# An existing bootstrap script gains worktree-creation flags, and only script
+# commands are upgraded, never names or other fields.
+app_dir=$(create_fake_app "init-upgrade-t3-bootstrap")
+cd "$app_dir"
+cat > t3.json <<'EOF'
+{"scripts":[{"name":"workspace run","command":"workspace bootstrap"},{"name":"Fast","command":"workspace run","previewUrl":"workspace run"}]}
+EOF
+run_init
+assert_true "t3.json existing bootstrap runs on worktree creation before the agent" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts").select { |script| script["command"] == "bin/workspace bootstrap" }; exit(scripts.size == 1 && scripts.first["runOnWorktreeCreate"] == true && scripts.first["async"] == false)'
+assert_true "t3.json upgrades commands but not names or other fields" ruby -rjson -e 'scripts = JSON.parse(File.read("t3.json")).fetch("scripts"); exit(scripts[0]["name"] == "workspace run" && scripts[1]["previewUrl"] == "workspace run")'
+
+app_dir=$(create_fake_app "init-upgrade-t3-async-bootstrap")
+cd "$app_dir"
+printf '{"scripts":[{"name":"Setup","command":"bin/workspace bootstrap","runOnWorktreeCreate":true,"async":true}]}\n' > t3.json
+run_init
+assert_true "t3.json makes an asynchronous bootstrap setup hold the agent" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").first; exit(script["runOnWorktreeCreate"] == true && script["async"] == false)'
+
+# T3 runs only the first worktree setup script; init never displaces one the
+# project already runs and says so instead.
+app_dir=$(create_fake_app "init-t3-other-setup")
+cd "$app_dir"
+printf '{"scripts":[{"name":"Setup","command":"bin/setup","runOnWorktreeCreate":true}]}\n' > t3.json
+t3_other_setup_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_true "t3.json keeps the project's setup script first" ruby -rjson -e 'setup = JSON.parse(File.read("t3.json")).fetch("scripts").find { |script| script["runOnWorktreeCreate"] }; exit(setup["command"] == "bin/setup")'
+assert_true "t3.json adds bootstrap as a plain script beside another setup script" ruby -rjson -e 'script = JSON.parse(File.read("t3.json")).fetch("scripts").find { |script| script["command"] == "bin/workspace bootstrap" }; exit(script && !script.key?("runOnWorktreeCreate"))'
+assert_true "init warns when another script is T3's setup" sh -c 'case "$1" in *"already runs \"Setup\""*) exit 0;; *) exit 1;; esac' sh "$t3_other_setup_output"
+
+app_dir=$(create_fake_app "init-t3-unwritable-other-setup")
+cd "$app_dir"
+printf '{"scripts":[{"name":"Setup","command":"bin/setup","runOnWorktreeCreate":true}]}\n' > t3.json
+t3_failing_mv="$TEST_TMP/t3-failing-mv"
+mkdir -p "$t3_failing_mv"
+cat > "$t3_failing_mv/mv" <<'SCRIPT'
+#!/bin/sh
+for argument do :; done
+[ "$argument" != t3.json ] || exit 1
+exec /bin/mv "$@"
+SCRIPT
+chmod +x "$t3_failing_mv/mv"
+t3_unwritable_output=$(PATH="$t3_failing_mv:$PATH" sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_true "init reports a t3.json it could not write" sh -c 'case "$1" in *"Couldn'"'"'t update t3.json"*) exit 0;; *) exit 1;; esac' sh "$t3_unwritable_output"
+assert_false "init gives no setup advice for a t3.json it could not write" sh -c 'case "$1" in *"already runs"*) exit 0;; *) exit 1;; esac' sh "$t3_unwritable_output"
+
+app_dir=$(create_fake_app "init-t3-unnamed-other-setup")
+cd "$app_dir"
+printf '{"scripts":[{"command":"bin/setup","runOnWorktreeCreate":true},{"name":"Odd","command":["npm","test"]}]}\n' > t3.json
+t3_unnamed_setup_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_true "init names an unnamed setup script by its command" sh -c 'case "$1" in *"already runs \"bin/setup\""*) exit 0;; *) exit 1;; esac' sh "$t3_unnamed_setup_output"
+assert_true "t3.json merges past a non-string command" grep -q '"bin/workspace run"' t3.json
+
+app_dir=$(create_fake_app "init-t3-script-limit")
+cd "$app_dir"
+ruby -rjson -e 'puts JSON.generate("scripts" => (1..48).map { |n| { "name" => "s#{n}", "command" => "echo #{n}" } })' > t3.json
+t3_limit_before=$(cat t3.json)
+t3_limit_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_true "init explains T3's script limit" sh -c 'case "$1" in *"50-script limit"*) exit 0;; *) exit 1;; esac' sh "$t3_limit_output"
+assert_equal "t3.json over T3's script limit is left unchanged" "$t3_limit_before" "$(cat t3.json)"
+
+app_dir=$(create_fake_app "init-invalid-t3-project")
+cd "$app_dir"
+printf '{not json "workspace run"' > t3.json
+assert_true "init tolerates unparseable t3.json" run_init
+assert_equal "unparseable t3.json left unchanged" '{not json "workspace run"' "$(cat t3.json)"
+
+app_dir=$(create_fake_app "init-linked-t3-project")
+cd "$app_dir"
+t3_linked_project='{"scripts":[{"name":"Setup","command":"bin/setup","runOnWorktreeCreate":true}]}'
+printf '%s\n' "$t3_linked_project" > "$TEST_TMP/linked-t3.json"
+ln -s "$TEST_TMP/linked-t3.json" t3.json
+t3_linked_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
+assert_equal "linked t3.json left unchanged" "$t3_linked_project" "$(cat "$TEST_TMP/linked-t3.json")"
+assert_true "init reports the linked t3.json" sh -c 'case "$1" in *"t3.json is linked"*) exit 0;; *) exit 1;; esac' sh "$t3_linked_output"
+assert_false "init gives no setup advice for a linked t3.json" sh -c 'case "$1" in *"already runs"*) exit 0;; *) exit 1;; esac' sh "$t3_linked_output"
+
 # Claude Code hooks need Ruby to merge JSON; without it init still succeeds.
 app_dir=$(create_fake_app "init-without-ruby")
 cd "$app_dir"
@@ -471,6 +567,7 @@ for tool_dir in /usr/bin /bin; do
 done
 assert_true "init succeeds without ruby" env PATH="$no_ruby_bin" sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1
 assert_false "init without ruby skips claude settings" [ -e .claude/settings.json ]
+assert_false "init without ruby skips t3.json" [ -e t3.json ]
 assert_true "init without ruby still creates the shim" [ -x bin/workspace ]
 
 # Codex itself writes the autogenerated header. It is not evidence that

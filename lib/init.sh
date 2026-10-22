@@ -611,26 +611,135 @@ _claude_settings_json() {
   ' "$1" 2>/dev/null
 }
 
-_ensure_claude_settings() {
-  _claude_settings_output=$(_claude_settings_json "$1") || return 1
-  printf '%s\n' "$_claude_settings_output" | _atomic_write "$1" 644
+# Merge Workspace entries into a JSON provider config with a Ruby generator
+# that prints the merged file, creating the file when it is missing. Linked,
+# unparseable, or Ruby-less configs are left unchanged with a warning. Returns
+# 1 only when the generator succeeded but its output could not be written, so
+# callers can tell a refused merge from a failed write.
+_ensure_json_provider_config() {
+  _json_config="$1"
+  _json_generator="$2"
+  _json_entries="$3"
+
+  if _linked_provider_config "$_json_config"; then
+    return 0
+  elif ! command -v ruby >/dev/null 2>&1; then
+    warn "Ruby is not available — skipped $_json_entries in $_json_config"
+    return 0
+  fi
+
+  _json_existed=false
+  [ ! -f "$_json_config" ] || _json_existed=true
+  _json_status=0
+  if _json_output=$("$_json_generator" "$_json_config"); then
+    if printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
+      if [ "$_json_existed" = true ]; then
+        step "$_json_config already exists ($_json_entries ensured)"
+      else
+        ok "Created $_json_config"
+      fi
+      return 0
+    fi
+    _json_status=1
+  fi
+
+  if [ "$_json_existed" = true ]; then
+    warn "Couldn't update $_json_config — left it unchanged."
+    warn "Add the $_json_entries from the Workspace README by hand."
+  else
+    warn "Could not create $_json_config — $_json_entries were skipped"
+  fi
+  return "$_json_status"
 }
 
-if _linked_provider_config .claude/settings.json; then
-  :
-elif ! command -v ruby >/dev/null 2>&1; then
-  warn "Ruby is not available — skipped Claude Code hooks in .claude/settings.json"
-elif [ -f .claude/settings.json ]; then
-  if _ensure_claude_settings .claude/settings.json; then
-    step ".claude/settings.json already exists (Workspace hooks ensured)"
-  else
-    warn "Couldn't parse .claude/settings.json — left it unchanged."
-    warn "Add the SessionStart and SessionEnd hooks from the Workspace README by hand."
-  fi
-elif _ensure_claude_settings .claude/settings.json; then
-  ok "Created .claude/settings.json"
-else
-  warn "Could not create .claude/settings.json — Claude Code hooks were skipped"
+_ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude Code hooks" || :
+
+# ── Create T3 Code project scripts ──────────────────────────────
+#
+# T3 Code reads t3.json from the repository root. When it creates a worktree
+# it runs only the first runOnWorktreeCreate script, and async false holds the
+# agent until that script exits. Bootstrap must hold the agent: otherwise the
+# agent's own startup hooks race T3's bootstrap, and a Claude SessionStart hook
+# running a full bootstrap can outlast T3's agent start timeout. Existing
+# files are merged like .claude/settings.json: other keys and scripts are
+# preserved, legacy Workspace script commands move to the shim, and each
+# Workspace script is added only when no script already runs that command.
+# Bootstrap becomes the setup script unless the project already runs another
+# one, which init reports instead of replacing. T3 rejects files with more
+# than 50 scripts.
+
+# Print t3.json with the Workspace scripts merged in, reading the existing
+# file when present. Fails, printing nothing, when the file is not a JSON
+# object whose scripts are an array of objects, or when the result would
+# exceed T3's script limit. With "notices" as the second argument, it instead
+# prints the notices for the user, one per line: the setup-script advice, or
+# the script-limit reason for a refused merge; a malformed file prints none.
+_t3_project_json() {
+  ruby -rjson -e '
+    path, mode = ARGV
+    notices = []
+    begin
+      project = File.exist?(path) ? JSON.parse(File.read(path)) : { "$schema" => "https://t3.codes/schema/t3.json" }
+      raise "t3.json must be an object" unless Hash === project
+      scripts = project["scripts"] ||= []
+      raise "scripts must be an array of objects" unless Array === scripts && scripts.all? { |script| Hash === script }
+
+      scripts.each do |script|
+        command = script["command"]
+        script["command"] = "bin/" + command if String === command && command =~ /\Aworkspace (bootstrap|run|info|archive)\z/
+      end
+
+      bootstrap = { "name" => "Bootstrap workspace", "command" => "bin/workspace bootstrap", "icon" => "configure" }
+      setup = scripts.find { |script| script["runOnWorktreeCreate"] == true }
+      if setup.nil?
+        bootstrap = scripts.find { |script| script["command"] == bootstrap["command"] } || bootstrap
+        bootstrap["runOnWorktreeCreate"] = true
+        setup = bootstrap
+      end
+      if setup["command"] == bootstrap["command"]
+        setup["async"] = false
+      else
+        label = [setup["name"], setup["command"]].find { |value| String === value && !value.empty? } || "another script"
+        notices << "t3.json already runs \"#{label}\" when T3 Code creates a worktree."
+        notices << "Have it run bin/workspace bootstrap so new T3 worktrees are set up."
+      end
+
+      [
+        bootstrap,
+        { "name" => "Run", "command" => "bin/workspace run", "icon" => "play" },
+        { "name" => "Workspace info", "command" => "bin/workspace info", "icon" => "debug" },
+        { "name" => "Archive workspace", "command" => "bin/workspace archive", "icon" => "build" }
+      ].each do |workspace_script|
+        scripts << workspace_script unless scripts.any? { |script| script["command"] == workspace_script["command"] }
+      end
+      if scripts.size > 50
+        notices = ["Adding the Workspace scripts would put t3.json over T3 Code'"'"'s 50-script limit; remove unused scripts first."]
+        raise "too many scripts"
+      end
+
+      output = JSON.pretty_generate(project) + "\n"
+    rescue StandardError
+      output = nil
+    end
+    if mode == "notices"
+      notices.each { |notice| puts notice }
+    elsif output
+      print output
+    else
+      exit 1
+    end
+  ' "$@" 2>/dev/null
+}
+
+# The notices describe the merged file, so they are shown only once it is
+# written, or when they explain why the merge was refused. A linked t3.json is
+# never merged and gets none.
+_t3_notices=""
+_path_has_symlink_component t3.json || _t3_notices=$(_t3_project_json t3.json notices || true)
+if _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"; then
+  printf '%s\n' "$_t3_notices" | while IFS= read -r _t3_notice; do
+    [ -z "$_t3_notice" ] || warn "$_t3_notice"
+  done
 fi
 
 # ── Add .workspace to .gitignore ────────────────────────────────

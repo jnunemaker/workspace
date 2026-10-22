@@ -47,8 +47,8 @@ bin/workspace run
 bin/workspace archive
 ```
 
-Claude Code, Codex, Conductor, Superset, and Superconductor use the same `bin/workspace`
-entrypoint from their generated project configuration. The root checkout keeps
+Claude Code, Codex, T3 Code, Conductor, Superset, and Superconductor use the same
+`bin/workspace` entrypoint from their generated project configuration. The root checkout keeps
 using the application's ordinary `bin/setup`, `bin/update`, and `bin/dev`
 commands.
 
@@ -91,7 +91,7 @@ Workspace lifecycle commands never invoke `bin/update`.
 
 `workspace init` creates a committed project entrypoint at `bin/workspace` and a
 minimum revision contract at `.workspace-version`. Generated Claude Code, Codex,
-Conductor, Superset, and Superconductor commands use this entrypoint. It first tries
+T3 Code, Conductor, Superset, and Superconductor commands use this entrypoint. It first tries
 `workspace` on `PATH`, then `${WORKSPACE_HOME:-$HOME/.workspace}/bin/workspace`,
 so provider shells do not need to load user dotfiles. A missing install prints
 the one-time install command; an older install prints the exact update command.
@@ -191,6 +191,11 @@ Leaving its databases behind is safer than dropping them; run
 unregisters the worktree, so if you resume it later the SessionStart hook sets
 it up again.
 
+In T3 Code, `t3.json` bootstraps new worktrees before the agent starts, so
+the SessionStart hook finds them set up and returns at once; a worktree T3 did
+not bootstrap still gets the full bootstrap from the hook. See
+[T3 Code worktrees](#t3-code-worktrees).
+
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs
 Ruby; without it `workspace init` skips `.claude/settings.json` with a warning.
@@ -203,6 +208,40 @@ Existing `.claude/settings.json` files are merged: other settings and hooks are
 kept, and each Workspace hook is added only when no hook already runs that
 command. An unparseable or linked settings file is left unchanged. Commit the
 generated file so new worktrees include it.
+
+## T3 Code worktrees
+
+T3 Code reads `t3.json` from the repository root. `workspace init` creates it,
+or merges into an existing one, with:
+
+- A **Bootstrap workspace** script that runs `bin/workspace bootstrap` when T3
+  creates a worktree (`runOnWorktreeCreate`). It sets `async: false`, so T3
+  holds the agent until bootstrap finishes.
+- **Run**, **Workspace info**, and **Archive workspace** scripts that use
+  `bin/workspace`.
+
+Existing keys and scripts are kept, exact legacy `workspace <command>` script
+commands move to the shim, and each Workspace script is added only when no
+script already runs that command. T3 runs only the first
+`runOnWorktreeCreate` script, so when the project already runs a different
+one, init adds bootstrap as a plain script and warns instead of displacing it;
+have that script run `bin/workspace bootstrap`. An unparseable or linked
+`t3.json`, or one that would exceed T3's 50-script limit, is left unchanged.
+Merging needs Ruby; without it `workspace init` skips `t3.json` with a
+warning. Commit the file so T3 picks it up; T3 uses its scripts for any
+project without scripts of its own in T3's settings.
+
+T3 gives an agent only a short time to start, and a full bootstrap in a
+Claude `SessionStart` hook can outlast it. With bootstrap as T3's setup
+script and `async: false`, T3 finishes setup before the agent starts, so the
+hook's `bootstrap --once` finds the worktree set up and returns at once.
+`workspace init` keeps that script at `async: false`: with `async` on, the
+agent's hook could start a second bootstrap alongside T3's.
+
+T3 has no teardown script. Run **Archive workspace** before deleting a thread's
+worktree, or let the shared Git registry clean up after T3 removes it: the
+next `workspace bootstrap` or `workspace run` reconciles removed worktrees,
+and `workspace prune` does it on demand.
 
 ## Codex worktrees
 
