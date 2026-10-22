@@ -656,8 +656,9 @@ _ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude
 
 # ── Create T3 Code project scripts ──────────────────────────────
 #
-# T3 Code reads t3.json from the repository root. When it creates a worktree
-# it runs only the first runOnWorktreeCreate script, and async false holds the
+# T3 Code offers the scripts in a repository-root t3.json for import into the
+# project's settings; it does not run them until they are imported. When it
+# creates a worktree it runs only the first runOnWorktreeCreate script, and async false holds the
 # agent until that script exits. Bootstrap must hold the agent: otherwise the
 # agent's own startup hooks race T3's bootstrap, and a Claude SessionStart hook
 # running a full bootstrap can outlast T3's agent start timeout. Existing
@@ -740,6 +741,7 @@ if _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"; then
   printf '%s\n' "$_t3_notices" | while IFS= read -r _t3_notice; do
     [ -z "$_t3_notice" ] || warn "$_t3_notice"
   done
+  [ ! -f t3.json ] || detail "In T3 Code, import Bootstrap workspace once: Actions → From t3.json"
 fi
 
 # ── Add .workspace to .gitignore ────────────────────────────────
