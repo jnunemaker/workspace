@@ -550,6 +550,7 @@ printf '%s\n' "$t3_linked_project" > "$TEST_TMP/linked-t3.json"
 ln -s "$TEST_TMP/linked-t3.json" t3.json
 t3_linked_output=$(sh "$WORKSPACE_HOME/lib/init.sh" 2>&1)
 assert_equal "linked t3.json left unchanged" "$t3_linked_project" "$(cat "$TEST_TMP/linked-t3.json")"
+assert_true "init reports the linked t3.json" sh -c 'case "$1" in *"t3.json is linked"*) exit 0;; *) exit 1;; esac' sh "$t3_linked_output"
 assert_false "init gives no setup advice for a linked t3.json" sh -c 'case "$1" in *"already runs"*) exit 0;; *) exit 1;; esac' sh "$t3_linked_output"
 
 # Claude Code hooks need Ruby to merge JSON; without it init still succeeds.
