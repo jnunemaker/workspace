@@ -613,7 +613,8 @@ _claude_settings_json() {
 
 # Merge Workspace entries into a JSON provider config with a Ruby generator
 # that prints the merged file, creating the file when it is missing. Linked,
-# unparseable, or Ruby-less configs are left unchanged with a warning.
+# unparseable, or Ruby-less configs are left unchanged with a warning. Returns
+# 1 only when the merged file could not be written.
 _ensure_json_provider_config() {
   _json_config="$1"
   _json_generator="$2"
@@ -626,23 +627,33 @@ _ensure_json_provider_config() {
     return 0
   fi
 
-  if [ -f "$_json_config" ]; then
-    if _json_output=$("$_json_generator" "$_json_config") && \
-       printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
-      step "$_json_config already exists ($_json_entries ensured)"
-    else
+  if ! _json_output=$("$_json_generator" "$_json_config"); then
+    if [ -f "$_json_config" ]; then
       warn "Couldn't update $_json_config — left it unchanged."
       warn "Add the $_json_entries from the Workspace README by hand."
+    else
+      warn "Could not create $_json_config — $_json_entries were skipped"
     fi
-  elif _json_output=$("$_json_generator" "$_json_config") && \
-       printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
+    return 0
+  fi
+
+  if [ -f "$_json_config" ]; then
+    if printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
+      step "$_json_config already exists ($_json_entries ensured)"
+      return 0
+    fi
+    warn "Couldn't update $_json_config — left it unchanged."
+    warn "Add the $_json_entries from the Workspace README by hand."
+  elif printf '%s\n' "$_json_output" | _atomic_write "$_json_config" 644; then
     ok "Created $_json_config"
+    return 0
   else
     warn "Could not create $_json_config — $_json_entries were skipped"
   fi
+  return 1
 }
 
-_ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude Code hooks"
+_ensure_json_provider_config .claude/settings.json _claude_settings_json "Claude Code hooks" || :
 
 # ── Create T3 Code project scripts ──────────────────────────────
 #
@@ -714,15 +725,16 @@ _t3_project_json() {
   ' "$1" "$_t3_notices" 2>/dev/null
 }
 
-if _t3_notices=$(mktemp "${TMPDIR:-/tmp}/workspace-init-t3.XXXXXX"); then
-  _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"
+# Notices are dropped when no temporary file is available; t3.json is still
+# merged. They describe the merged file, so they are shown only once it is
+# written, or when they explain why the merge was refused.
+_t3_notices=$(mktemp "${TMPDIR:-/tmp}/workspace-init-t3.XXXXXX" 2>/dev/null) || _t3_notices=/dev/null
+if _ensure_json_provider_config t3.json _t3_project_json "T3 Code scripts"; then
   while IFS= read -r _t3_notice; do
     warn "$_t3_notice"
   done < "$_t3_notices"
-  rm -f "$_t3_notices"
-else
-  warn "Could not create a temporary file — skipped T3 Code scripts in t3.json"
 fi
+[ "$_t3_notices" = /dev/null ] || rm -f "$_t3_notices"
 
 # ── Add .workspace to .gitignore ────────────────────────────────
 
