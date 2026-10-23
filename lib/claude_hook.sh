@@ -18,12 +18,19 @@
 # look identical, leaving databases behind is safer than dropping them. Run
 # `bin/workspace archive` by hand in that case.
 #
+# T3 Code fails an agent that takes too long to start. Under T3, session-start
+# waits only briefly, then leaves a longer bootstrap running in the background
+# and tells Claude how to wait for it. Importing the Bootstrap workspace script
+# from t3.json makes T3 finish setup before the agent starts instead.
+#
 # State lives in the worktree's private Git directory:
 #   workspace-claude-branch         branch the current session started on
 #   workspace-claude-bootstrapping  PID of a bootstrap still setting up
 #   workspace-claude-archiving      PID of a background archive still running
 #   workspace-claude-archived       teardown ran; next start must fully bootstrap
 #   workspace-claude.log            background archive output
+#   workspace-claude-bootstrap.log.PID     T3 Code bootstrap job output
+#   workspace-claude-bootstrap.status.PID  that job's exit status
 
 set -e
 
@@ -74,6 +81,25 @@ _claude_bootstrapping_marker="$_claude_git_dir/workspace-claude-bootstrapping"
 _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"
 _claude_archived_marker="$_claude_git_dir/workspace-claude-archived"
 _claude_log="$_claude_git_dir/workspace-claude.log"
+# Seconds session-start waits for bootstrap under T3 Code before moving it to
+# the background, well inside the time T3 gives an agent to start.
+_claude_t3_wait="${WORKSPACE_CLAUDE_T3_WAIT:-30}"
+
+# Background jobs run in their own session so they survive Claude Code
+# stopping the hook's process group (macOS has no setsid command, but ships
+# Perl). Prefix a command with "$@" to detach it.
+if command -v setsid >/dev/null 2>&1; then
+  set -- setsid
+elif command -v perl >/dev/null 2>&1; then
+  set -- perl -MPOSIX=setsid -e 'setsid(); exec @ARGV or die "exec: $!"'
+else
+  set --
+fi
+
+# Single-quote a value for a shell command Claude is asked to run.
+_claude_shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 # Publish a PID marker by rename, so readers never see a partial file.
 _claude_write_pid() {
@@ -138,9 +164,57 @@ case "$_claude_event" in
     [ ! -f "$_claude_archived_marker" ] || _claude_once=
 
     # Bootstrap output goes to stderr so it stays out of Claude's context.
-    sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once >&2 &
+    # Under T3 Code it goes to a log instead, since it may outlive this hook,
+    # and a detached job records its exit status and, after a successful full
+    # bootstrap, clears the archived marker itself. Its command line carries
+    # the expanded bootstrap path, so a waiting archive recognizes it. An
+    # archive that started while setup ran owns the teardown record.
+    # Each job names its log and status after its own PID, so overlapping
+    # session starts never read each other's result; day-old ones are removed.
+    if [ -n "${T3CODE_CLI_PATH:-}" ]; then
+      find "$_claude_git_dir" -maxdepth 1 \( -name 'workspace-claude-bootstrap.log.*' \
+        -o -name 'workspace-claude-bootstrap.status.*' \) -mtime +0 -exec rm -f {} + 2>/dev/null || :
+      "$@" sh -c '
+        exec > "$3.log.$$" 2>&1
+        sh "$1" ${2:+"$2"}
+        _status=$?
+        if [ "$_status" -eq 0 ] && [ -z "$2" ] && [ ! -f "$5" ]; then
+          rm -f "$4"
+        fi
+        printf "%s\n" "$_status" > "$3.status.tmp.$$" && mv -f "$3.status.tmp.$$" "$3.status.$$"
+        exit "$_status"
+      ' workspace-claude-bootstrap "$WORKSPACE_LIB/bootstrap.sh" "$_claude_once" \
+        "$_claude_git_dir/workspace-claude-bootstrap" "$_claude_archived_marker" \
+        "$_claude_archiving_marker" > /dev/null 2>&1 < /dev/null &
+    else
+      sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once >&2 &
+    fi
     _claude_bootstrap=$!
     _claude_write_pid "$_claude_bootstrapping_marker" "$_claude_bootstrap"
+
+    if [ -n "${T3CODE_CLI_PATH:-}" ]; then
+      _claude_waited=0
+      while kill -0 "$_claude_bootstrap" 2>/dev/null; do
+        if [ "$_claude_waited" -ge $((_claude_t3_wait * 5)) ]; then
+          # The bootstrapping marker stays with the running setup. The wait
+          # command fails unless setup recorded success.
+          _claude_quoted_log=$(_claude_shell_quote "$_claude_git_dir/workspace-claude-bootstrap.log.$_claude_bootstrap")
+          _claude_quoted_status=$(_claude_shell_quote "$_claude_git_dir/workspace-claude-bootstrap.status.$_claude_bootstrap")
+          cat <<EOF
+Workspace setup is still running in the background (T3 Code only waits so long for an agent to start). Before running the app, tests, or database commands, wait for it to finish:
+
+  while kill -0 $_claude_bootstrap 2>/dev/null; do sleep 5; done; tail -n 20 $_claude_quoted_log; [ "\$(cat $_claude_quoted_status 2>/dev/null)" = 0 ]
+
+If that command fails, setup did not complete: tell the user and show the log instead of continuing.
+
+To finish setup before the agent starts, import the Bootstrap workspace script from t3.json in T3 Code's Actions menu.
+EOF
+          exit 0
+        fi
+        sleep 0.2
+        _claude_waited=$((_claude_waited + 1))
+      done
+    fi
 
     wait "$_claude_bootstrap" || exit 1
     # An archive that started while setup ran owns the teardown record now.
@@ -159,9 +233,7 @@ case "$_claude_event" in
     ! _claude_archive_running || exit 0
 
     # SessionEnd hooks get at most 60 seconds; archive may need longer. The
-    # job runs in its own session so it survives Claude Code stopping the
-    # hook's process group (macOS has no setsid command, but ships Perl), and
-    # publishes its own PID before working.
+    # job runs detached and publishes its own PID before working.
     #
     # The job first waits for a bootstrap still setting up, or a session start
     # about to launch one; they are matched by expanded paths, which never
@@ -169,13 +241,6 @@ case "$_claude_event" in
     # full bootstrap, since teardown may stop partway. The session branch is
     # forgotten only after a complete archive, so a failed one is attempted
     # again on the next archive.
-    if command -v setsid >/dev/null 2>&1; then
-      set -- setsid
-    elif command -v perl >/dev/null 2>&1; then
-      set -- perl -MPOSIX=setsid -e 'setsid(); exec @ARGV or die "exec: $!"'
-    else
-      set --
-    fi
     "$@" nohup sh -c '
       printf "%s\n" "$$" > "$4.$$" && mv -f "$4.$$" "$4"
       while [ -f "$5" ]; do

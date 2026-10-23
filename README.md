@@ -191,10 +191,14 @@ Leaving its databases behind is safer than dropping them; run
 unregisters the worktree, so if you resume it later the SessionStart hook sets
 it up again.
 
-In T3 Code, `t3.json` bootstraps new worktrees before the agent starts, so
-the SessionStart hook finds them set up and returns at once; a worktree T3 did
-not bootstrap still gets the full bootstrap from the hook. See
-[T3 Code worktrees](#t3-code-worktrees).
+In T3 Code, once the project's **Bootstrap workspace** script is imported,
+T3 sets up new worktrees before the agent starts, so the SessionStart hook
+finds them set up and returns at once. Until then the hook bootstraps under T3
+too, but because T3 fails an agent that takes too long to start, it waits only
+30 seconds: a longer bootstrap keeps running in the background, logged to
+`workspace-claude-bootstrap.log.<pid>` in the worktree's Git directory, and Claude
+is told how to wait for it. That wait command fails if setup failed, so Claude
+reports it instead of working in a half-set-up worktree. See [T3 Code worktrees](#t3-code-worktrees).
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs
@@ -228,15 +232,21 @@ one, init adds bootstrap as a plain script and warns instead of displacing it;
 have that script run `bin/workspace bootstrap`. An unparseable or linked
 `t3.json`, or one that would exceed T3's 50-script limit, is left unchanged.
 Merging needs Ruby; without it `workspace init` skips `t3.json` with a
-warning. Commit the file so T3 picks it up; T3 uses its scripts for any
-project without scripts of its own in T3's settings.
+warning. Commit the file.
 
-T3 gives an agent only a short time to start, and a full bootstrap in a
-Claude `SessionStart` hook can outlast it. With bootstrap as T3's setup
-script and `async: false`, T3 finishes setup before the agent starts, so the
-hook's `bootstrap --once` finds the worktree set up and returns at once.
+T3 does not run `t3.json` scripts on its own: it offers them for import into
+the project's T3 settings. Once per project, open **Actions** in a thread's
+toolbar and, under **From t3.json**, import **Bootstrap workspace** (and the
+other scripts if you want them as actions).
+
+T3 gives an agent only a short time to start, and a full bootstrap can
+outlast it. With bootstrap imported as T3's setup script and `async: false`,
+T3 finishes setup before the agent starts, so the Claude hook's
+`bootstrap --once` finds the worktree set up and returns at once.
 `workspace init` keeps that script at `async: false`: with `async` on, the
-agent's hook could start a second bootstrap alongside T3's.
+agent's hook could start a second bootstrap alongside T3's. Without the
+import, the Claude hook still bootstraps but moves a slow bootstrap to the
+background so the agent can start.
 
 T3 has no teardown script. Run **Archive workspace** before deleting a thread's
 worktree, or let the shared Git registry clean up after T3 removes it: the
