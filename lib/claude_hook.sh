@@ -98,6 +98,11 @@ else
   set --
 fi
 
+# Single-quote a value for a shell command Claude is asked to run.
+_claude_shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 # Publish a PID marker by rename, so readers never see a partial file.
 _claude_write_pid() {
   printf '%s\n' "$2" > "$1.$$" && mv -f "$1.$$" "$1" || { rm -f "$1.$$"; return 1; }
@@ -191,10 +196,12 @@ case "$_claude_event" in
         if [ "$_claude_waited" -ge $((_claude_t3_wait * 5)) ]; then
           # The bootstrapping marker stays with the running setup. The wait
           # command fails unless setup recorded success.
+          _claude_quoted_log=$(_claude_shell_quote "$_claude_bootstrap_log")
+          _claude_quoted_status=$(_claude_shell_quote "$_claude_bootstrap_status")
           cat <<EOF
 Workspace setup is still running in the background (T3 Code only waits so long for an agent to start). Before running the app, tests, or database commands, wait for it to finish:
 
-  while kill -0 $_claude_bootstrap 2>/dev/null; do sleep 5; done; tail -n 20 "$_claude_bootstrap_log"; [ "\$(cat "$_claude_bootstrap_status" 2>/dev/null)" = 0 ]
+  while kill -0 $_claude_bootstrap 2>/dev/null; do sleep 5; done; tail -n 20 $_claude_quoted_log; [ "\$(cat $_claude_quoted_status 2>/dev/null)" = 0 ]
 
 If that command fails, setup did not complete: tell the user and show the log instead of continuing.
 

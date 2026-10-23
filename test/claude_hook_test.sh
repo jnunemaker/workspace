@@ -341,4 +341,13 @@ wait_until [ ! -e "$t3_git_dir/workspace-claude-archiving" ]
 assert_equal "archive waits for a background T3 bootstrap" "setup archive" "$(last_two_log)"
 git -C "$t3_worktree" checkout -q t3/feature
 
+# The wait command Claude runs must survive shell metacharacters in the path.
+odd_worktree="$TEST_TMP/claude-t3-\$HOME-\`true\`-it's"
+git -C "$hook_root" worktree add -q -b t3/odd "$odd_worktree"
+odd_worktree=$(cd "$odd_worktree" && pwd -P)
+hook_stdout=$(export WORKSPACE_TEST_SETUP_SLEEP=2 WORKSPACE_CLAUDE_T3_WAIT=1 HOOK_T3_CLI=/usr/local/bin/t3
+  run_hook session-start "$odd_worktree" 2>/dev/null)
+assert_true "T3 session-start prints a wait command for an odd path" [ -n "$(t3_wait_command "$hook_stdout")" ]
+assert_true "T3 wait command handles shell metacharacters in the path" sh -c "$(t3_wait_command "$hook_stdout")"
+
 report "claude-hook"
