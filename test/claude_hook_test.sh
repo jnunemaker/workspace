@@ -26,6 +26,7 @@ cat > "$hook_root/bin/setup" <<'EOF'
 #!/bin/sh
 [ -z "${WORKSPACE_TEST_SETUP_SLEEP:-}" ] || sleep "$WORKSPACE_TEST_SETUP_SLEEP"
 printf 'setup\n' >> "$WORKSPACE_TEST_LOG"
+[ -z "${WORKSPACE_TEST_SETUP_FAIL:-}" ] || exit 1
 EOF
 cat > "$hook_root/bin/workspace-archive-hook" <<'EOF'
 #!/bin/sh
@@ -304,5 +305,40 @@ assert_true "T3 session-start keeps the running setup's marker" [ -s "$t3_git_di
 wait_until [ -s "$t3_worktree/.workspace" ]
 assert_true "background bootstrap finishes the worktree" [ -s "$t3_worktree/.workspace" ]
 assert_equal "background bootstrap runs setup" "$((setups_before + 2))" "$(count_log setup)"
+
+# The printed wait command is what Claude runs before using the workspace.
+t3_wait_command() {
+  printf '%s\n' "$1" | sed -n 's/^  \(while kill -0 .*\)$/\1/p'
+}
+assert_true "suggested wait succeeds after setup succeeds" sh -c "$(t3_wait_command "$hook_stdout")"
+assert_equal "background bootstrap records success" "0" "$(cat "$t3_git_dir/workspace-claude-bootstrap.status")"
+
+# After a hook archive, a slow full bootstrap clears the archived marker when
+# it succeeds, so the next session start goes back to --once.
+: > "$t3_git_dir/workspace-claude-archived"
+hook_stdout=$(export WORKSPACE_TEST_SETUP_SLEEP=3 WORKSPACE_CLAUDE_T3_WAIT=1 HOOK_T3_CLI=/usr/local/bin/t3
+  run_hook session-start "$t3_worktree" 2>/dev/null)
+assert_true "archived T3 worktree moves a slow full bootstrap to the background" sh -c 'case "$1" in *"still running"*) ;; *) exit 1 ;; esac' sh "$hook_stdout"
+assert_true "archived marker stays while background setup runs" [ -f "$t3_git_dir/workspace-claude-archived" ]
+wait_until [ -s "$t3_git_dir/workspace-claude-bootstrap.status" ]
+assert_false "background full bootstrap clears the archived marker" [ -f "$t3_git_dir/workspace-claude-archived" ]
+
+# A background bootstrap that fails makes the suggested wait command fail.
+: > "$t3_git_dir/workspace-claude-archived"
+hook_stdout=$(export WORKSPACE_TEST_SETUP_SLEEP=3 WORKSPACE_TEST_SETUP_FAIL=1 WORKSPACE_CLAUDE_T3_WAIT=1 HOOK_T3_CLI=/usr/local/bin/t3
+  run_hook session-start "$t3_worktree" 2>/dev/null)
+assert_true "T3 session-start tells Claude what a failed wait means" sh -c 'case "$1" in *"setup did not complete"*) ;; *) exit 1 ;; esac' sh "$hook_stdout"
+assert_false "suggested wait fails after setup fails" sh -c "$(t3_wait_command "$hook_stdout")"
+assert_false "background bootstrap records failure" [ "$(cat "$t3_git_dir/workspace-claude-bootstrap.status")" = 0 ]
+assert_true "failed background bootstrap keeps the archived marker" [ -f "$t3_git_dir/workspace-claude-archived" ]
+
+# An archive that starts while a background bootstrap runs waits for it.
+(export WORKSPACE_TEST_SETUP_SLEEP=3 WORKSPACE_CLAUDE_T3_WAIT=1 HOOK_T3_CLI=/usr/local/bin/t3
+  run_hook session-start "$t3_worktree") >/dev/null 2>&1
+git -C "$t3_worktree" checkout -q --detach
+run_hook session-end "$t3_worktree" >/dev/null 2>&1
+wait_until [ ! -e "$t3_git_dir/workspace-claude-archiving" ]
+assert_equal "archive waits for a background T3 bootstrap" "setup archive" "$(last_two_log)"
+git -C "$t3_worktree" checkout -q t3/feature
 
 report "claude-hook"

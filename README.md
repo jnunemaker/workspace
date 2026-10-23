@@ -197,7 +197,8 @@ finds them set up and returns at once. Until then the hook bootstraps under T3
 too, but because T3 fails an agent that takes too long to start, it waits only
 30 seconds: a longer bootstrap keeps running in the background, logged to
 `workspace-claude-bootstrap.log` in the worktree's Git directory, and Claude
-is told how to wait for it. See [T3 Code worktrees](#t3-code-worktrees).
+is told how to wait for it. That wait command fails if setup failed, so Claude
+reports it instead of working in a half-set-up worktree. See [T3 Code worktrees](#t3-code-worktrees).
 
 Both hooks resolve the worktree root from the session's directory, so they
 work when the session has moved into a subdirectory. Merging the hooks needs

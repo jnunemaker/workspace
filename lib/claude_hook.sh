@@ -30,6 +30,7 @@
 #   workspace-claude-archived       teardown ran; next start must fully bootstrap
 #   workspace-claude.log            background archive output
 #   workspace-claude-bootstrap.log  bootstrap output under T3 Code
+#   workspace-claude-bootstrap.status  exit status of that bootstrap
 
 set -e
 
@@ -81,6 +82,7 @@ _claude_archiving_marker="$_claude_git_dir/workspace-claude-archiving"
 _claude_archived_marker="$_claude_git_dir/workspace-claude-archived"
 _claude_log="$_claude_git_dir/workspace-claude.log"
 _claude_bootstrap_log="$_claude_git_dir/workspace-claude-bootstrap.log"
+_claude_bootstrap_status="$_claude_git_dir/workspace-claude-bootstrap.status"
 # Seconds session-start waits for bootstrap under T3 Code before moving it to
 # the background, well inside the time T3 gives an agent to start.
 _claude_t3_wait="${WORKSPACE_CLAUDE_T3_WAIT:-30}"
@@ -159,10 +161,24 @@ case "$_claude_event" in
     [ ! -f "$_claude_archived_marker" ] || _claude_once=
 
     # Bootstrap output goes to stderr so it stays out of Claude's context.
-    # Under T3 Code it goes to a log instead, since it may outlive this hook.
+    # Under T3 Code it goes to a log instead, since it may outlive this hook,
+    # and a detached job records its exit status and, after a successful full
+    # bootstrap, clears the archived marker itself. Its command line carries
+    # the expanded bootstrap path, so a waiting archive recognizes it. An
+    # archive that started while setup ran owns the teardown record.
     if [ -n "${T3CODE_CLI_PATH:-}" ]; then
-      "$@" sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once \
-        > "$_claude_bootstrap_log" 2>&1 < /dev/null &
+      rm -f "$_claude_bootstrap_status"
+      "$@" sh -c '
+        sh "$1" ${2:+"$2"}
+        _status=$?
+        if [ "$_status" -eq 0 ] && [ -z "$2" ] && [ ! -f "$5" ]; then
+          rm -f "$4"
+        fi
+        printf "%s\n" "$_status" > "$3.$$" && mv -f "$3.$$" "$3"
+        exit "$_status"
+      ' workspace-claude-bootstrap "$WORKSPACE_LIB/bootstrap.sh" "$_claude_once" \
+        "$_claude_bootstrap_status" "$_claude_archived_marker" \
+        "$_claude_archiving_marker" > "$_claude_bootstrap_log" 2>&1 < /dev/null &
     else
       sh "$WORKSPACE_LIB/bootstrap.sh" $_claude_once >&2 &
     fi
@@ -173,12 +189,14 @@ case "$_claude_event" in
       _claude_waited=0
       while kill -0 "$_claude_bootstrap" 2>/dev/null; do
         if [ "$_claude_waited" -ge $((_claude_t3_wait * 5)) ]; then
-          # The bootstrapping marker stays with the running setup, and the
-          # archived marker stays until a later session start sees it finish.
+          # The bootstrapping marker stays with the running setup. The wait
+          # command fails unless setup recorded success.
           cat <<EOF
 Workspace setup is still running in the background (T3 Code only waits so long for an agent to start). Before running the app, tests, or database commands, wait for it to finish:
 
-  while kill -0 $_claude_bootstrap 2>/dev/null; do sleep 5; done; tail -n 20 "$_claude_bootstrap_log"
+  while kill -0 $_claude_bootstrap 2>/dev/null; do sleep 5; done; tail -n 20 "$_claude_bootstrap_log"; [ "\$(cat "$_claude_bootstrap_status" 2>/dev/null)" = 0 ]
+
+If that command fails, setup did not complete: tell the user and show the log instead of continuing.
 
 To finish setup before the agent starts, import the Bootstrap workspace script from t3.json in T3 Code's Actions menu.
 EOF
