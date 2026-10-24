@@ -512,11 +512,18 @@ assert_false "strict cleanup reports Rails drop failures" drop_workspace_databas
 
 # Rails parallel testing copies each test database to <name>_0, <name>_1, ...
 # A stand-in for bin/rails runs the runner code against a stub ActiveRecord
-# that records each drop, with one suffixed and one shared test database.
+# that records each drop. Only app_test_parallel-ws ends in this workspace's
+# suffix; shared_test and app_test_parallel-wsx (another workspace) must stay.
 app_dir=$(create_fake_app "parallel-test-drop")
 cd "$app_dir"
 printf 'test:\n  database: app_test\n' > config/database.yml
 cat > fake_active_record.rb <<'RUBY'
+require "pathname"
+
+module Rails
+  def self.root = Pathname.pwd
+end
+
 module ActiveRecord
   module DatabaseConfigurations
     HashConfig = Struct.new(:env_name, :name, :configuration_hash) do
@@ -530,7 +537,8 @@ module ActiveRecord
     def self.configs_for(env_name:)
       [
         DatabaseConfigurations::HashConfig.new(env_name, "primary", { database: "app_test#{ENV.fetch("WORKSPACE_DB_SUFFIX")}" }),
-        DatabaseConfigurations::HashConfig.new(env_name, "shared", { database: "shared_test" })
+        DatabaseConfigurations::HashConfig.new(env_name, "shared", { database: "shared_test" }),
+        DatabaseConfigurations::HashConfig.new(env_name, "other", { database: "app_test#{ENV.fetch("WORKSPACE_DB_SUFFIX")}x" })
       ]
     end
   end
@@ -550,7 +558,7 @@ cat > bin/rails <<'SCRIPT'
 #!/bin/sh
 case "$1" in
   db:drop) printf '%s:db:drop\n' "$RAILS_ENV" >> "$WORKSPACE_TEST_DROP_LOG" ;;
-  runner) exec ruby fake_active_record.rb "$2" ;;
+  runner) [ -z "${WORKSPACE_TEST_RUNNER_FAILS:-}" ] || exit 1; exec ruby fake_active_record.rb "$2" ;;
 esac
 SCRIPT
 chmod +x bin/rails
@@ -565,6 +573,20 @@ for drop_function in drop_workspace_databases drop_workspace_databases_strict; d
     "$(seq 0 63 | sed 's/^/test:app_test_parallel-ws_/')" \
     "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 done
+
+# A literal worker count in the test helper can exceed the processor count.
+mkdir -p test
+printf 'class ActiveSupport::TestCase\n  parallelize(workers: 70)\nend\n' > test/test_helper.rb
+: > "$WORKSPACE_TEST_DROP_LOG"
+drop_workspace_databases_strict >/dev/null 2>&1
+assert_equal "cleanup covers the worker count configured in test_helper.rb" \
+  "$(seq 0 69 | sed 's/^/test:app_test_parallel-ws_/')" \
+  "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
+
+# Strict cleanup keeps the registry entry for a retry when the copies remain;
+# legacy cleanup only warns.
+assert_false "strict cleanup reports parallel copy failures" env WORKSPACE_TEST_RUNNER_FAILS=1 sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=parallel-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_true "legacy cleanup tolerates parallel copy failures" env WORKSPACE_TEST_RUNNER_FAILS=1 sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=parallel-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 unset PARALLEL_WORKERS WORKSPACE_TEST_DROP_LOG
 
 report "db.sh"

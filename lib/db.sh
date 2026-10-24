@@ -237,15 +237,20 @@ create_workspace_databases() {
 
 # Drop the per-worker copies Rails parallel testing makes of each workspace
 # test database (<name>_0, <name>_1, ...), which db:drop does not know about.
-# Only names carrying the workspace suffix are touched; dropping a copy that was never created is a no-op.
+# Covers the processor count, PARALLEL_WORKERS, and a literal
+# parallelize(workers: N) in test/test_helper.rb. Only names ending in the
+# workspace suffix are touched; dropping a copy that was never created is a
+# no-op. Returns nonzero when the copies could not be dropped.
 drop_parallel_test_databases() {
   step "Dropping parallel test databases"
   if RAILS_ENV=test VERBOSE=false bin/rails runner '
     require "etc"
     suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
-    workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i].max
+    helper = Rails.root.join("test/test_helper.rb")
+    configured = helper.file? ? helper.read[/parallelize\(\s*workers:\s*(\d+)/, 1].to_i : 0
+    workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i, configured].max
     ActiveRecord::Base.configurations.configs_for(env_name: "test").each do |db_config|
-      next unless db_config.database.to_s.include?(suffix)
+      next unless db_config.database.to_s.end_with?(suffix)
       workers.times do |worker|
         copy = ActiveRecord::DatabaseConfigurations::HashConfig.new(
           db_config.env_name, db_config.name,
@@ -258,6 +263,7 @@ drop_parallel_test_databases() {
     ok "Parallel test databases dropped"
   else
     warn "Could not drop parallel test databases"
+    return 1
   fi
 }
 
@@ -283,7 +289,7 @@ drop_workspace_databases() {
   RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
   ok "Test database dropped"
 
-  drop_parallel_test_databases
+  drop_parallel_test_databases || true
 }
 
 # Drop databases for unattended reconciliation. Unlike the legacy archive path,
@@ -323,7 +329,7 @@ drop_workspace_databases_strict() {
     _drop_failed=1
   fi
 
-  drop_parallel_test_databases
+  drop_parallel_test_databases || _drop_failed=1
 
   [ "$_drop_failed" -eq 0 ]
 }
