@@ -235,6 +235,33 @@ create_workspace_databases() {
   fi
 }
 
+# Drop the per-worker copies Rails parallel testing makes of each workspace
+# test database (<name>_0, <name>_1, ...). db:drop only knows the configured
+# names, so these were left behind. Only names carrying the workspace suffix
+# are touched; dropping a copy that was never created is a no-op.
+drop_parallel_test_databases() {
+  step "Dropping parallel test databases"
+  if RAILS_ENV=test VERBOSE=false bin/rails runner '
+    require "etc"
+    suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
+    workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i].max
+    ActiveRecord::Base.configurations.configs_for(env_name: "test").each do |db_config|
+      next unless db_config.database.to_s.include?(suffix)
+      workers.times do |worker|
+        copy = ActiveRecord::DatabaseConfigurations::HashConfig.new(
+          db_config.env_name, db_config.name,
+          db_config.configuration_hash.merge(database: "#{db_config.database}_#{worker}")
+        )
+        ActiveRecord::Tasks::DatabaseTasks.drop(copy)
+      end
+    end
+  ' 2>/dev/null; then
+    ok "Parallel test databases dropped"
+  else
+    warn "Could not drop parallel test databases"
+  fi
+}
+
 # Drop workspace-specific databases.
 drop_workspace_databases() {
   if is_default_workspace; then
@@ -256,6 +283,8 @@ drop_workspace_databases() {
   step "Dropping test database"
   RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
   ok "Test database dropped"
+
+  drop_parallel_test_databases
 }
 
 # Drop databases for unattended reconciliation. Unlike the legacy archive path,
@@ -294,6 +323,8 @@ drop_workspace_databases_strict() {
     warn "Could not drop test database"
     _drop_failed=1
   fi
+
+  drop_parallel_test_databases
 
   [ "$_drop_failed" -eq 0 ]
 }

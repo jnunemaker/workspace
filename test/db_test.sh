@@ -508,4 +508,66 @@ chmod +x bin/rails
 WORKSPACE_NAME="strict-failure-ws"
 assert_false "strict cleanup reports Rails drop failures" drop_workspace_databases_strict
 
+# ── parallel test database cleanup ──────────────────────────────
+
+# Rails parallel testing copies each test database to <name>_0, <name>_1, ...
+# A stand-in for bin/rails runs the runner code against a stub ActiveRecord
+# that records each drop, with one suffixed and one shared test database.
+app_dir=$(create_fake_app "parallel-test-drop")
+cd "$app_dir"
+printf 'test:\n  database: app_test\n' > config/database.yml
+cat > fake_active_record.rb <<'RUBY'
+Config = Struct.new(:env_name, :name, :configuration_hash) do
+  def database = configuration_hash[:database]
+end
+
+module ActiveRecord
+  module DatabaseConfigurations
+    HashConfig = ::Config
+  end
+
+  class Base
+    def self.configurations = self
+
+    def self.configs_for(env_name:)
+      [
+        Config.new(env_name, "primary", { database: "app_test#{ENV.fetch("WORKSPACE_DB_SUFFIX")}" }),
+        Config.new(env_name, "shared", { database: "shared_test" })
+      ]
+    end
+  end
+
+  module Tasks
+    module DatabaseTasks
+      def self.drop(db_config)
+        File.open(ENV.fetch("WORKSPACE_TEST_DROP_LOG"), "a") { |log| log.puts "#{db_config.env_name}:#{db_config.database}" }
+      end
+    end
+  end
+end
+
+eval(ARGV.fetch(0))
+RUBY
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+case "$1" in
+  db:drop) printf '%s:db:drop\n' "$RAILS_ENV" >> "$WORKSPACE_TEST_DROP_LOG" ;;
+  runner) exec ruby fake_active_record.rb "$2" ;;
+esac
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="parallel-ws"
+WORKSPACE_TEST_DROP_LOG="$TEST_TMP/parallel-drop.log"
+export WORKSPACE_TEST_DROP_LOG
+
+for drop_function in drop_workspace_databases drop_workspace_databases_strict; do
+  : > "$WORKSPACE_TEST_DROP_LOG"
+  PARALLEL_WORKERS=64 "$drop_function" >/dev/null 2>&1
+  assert_equal "$drop_function drops every parallel worker copy" "64" "$(grep -c '^test:app_test_parallel-ws_[0-9]*$' "$WORKSPACE_TEST_DROP_LOG")"
+  assert_true "$drop_function drops the first worker copy" grep -q '^test:app_test_parallel-ws_0$' "$WORKSPACE_TEST_DROP_LOG"
+  assert_true "$drop_function drops the last worker copy" grep -q '^test:app_test_parallel-ws_63$' "$WORKSPACE_TEST_DROP_LOG"
+  assert_false "$drop_function leaves databases without the workspace suffix" grep -q 'shared_test' "$WORKSPACE_TEST_DROP_LOG"
+done
+unset PARALLEL_WORKERS WORKSPACE_TEST_DROP_LOG
+
 report "db.sh"

@@ -22,7 +22,8 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 Usage: workspace archive
 
 Stops processes using this workspace's reserved ports and drops its development
-and test databases. Runs bin/workspace-archive-hook first when present.
+and test databases, including the copies Rails parallel testing makes of the
+test databases. Runs bin/workspace-archive-hook first when present.
 The original checkout is left alone.
 EOF
   exit 0

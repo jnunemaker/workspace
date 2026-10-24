@@ -136,7 +136,8 @@ cat > "$archive_help_expected" <<'EOF'
 Usage: workspace archive
 
 Stops processes using this workspace's reserved ports and drops its development
-and test databases. Runs bin/workspace-archive-hook first when present.
+and test databases, including the copies Rails parallel testing makes of the
+test databases. Runs bin/workspace-archive-hook first when present.
 The original checkout is left alone.
 EOF
 
@@ -262,7 +263,7 @@ printf 'archive-hook:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_
 SCRIPT
 cat > bin/rails <<'SCRIPT'
 #!/usr/bin/env workspace-test-runtime
-printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$1" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
 SCRIPT
 chmod +x "$toolchain_bin/workspace-test-runtime" "$toolchain_bin/lsof" \
   "$toolchain_bin/foreman" bin/workspace-run-hook bin/workspace-toolchain-check \
@@ -288,11 +289,12 @@ assert_true "environment hook supplies archive cleanup toolchain" env \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
   WORKSPACE_TEST_TOOLCHAIN_LOG="$toolchain_log" \
   /bin/sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
-assert_equal "archive environment reaches hook and both Rails drops" \
+assert_equal "archive environment reaches hook and every Rails drop" \
   "environment:conductor:$toolchain_root:toolchain-workspace
 archive-hook:_toolchain-workspace
 rails:development:_toolchain-workspace:db:drop
-rails:test:_toolchain-workspace:db:drop" "$(cat "$toolchain_log")"
+rails:test:_toolchain-workspace:db:drop
+rails:test:_toolchain-workspace:runner" "$(cat "$toolchain_log")"
 assert_false "sourced environment hook remains non-executable" [ -x bin/workspace-environment-hook ]
 
 # Without an override, preserve the historical generic URL.
