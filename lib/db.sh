@@ -238,8 +238,8 @@ create_workspace_databases() {
 # Drop the per-worker copies Rails parallel testing makes of each workspace
 # test database (<name>_0, <name>_1, ...), which db:drop does not know about.
 # Copies up to the processor count or PARALLEL_WORKERS are dropped outright
-# (a copy that was never created is a no-op); past that, dropping continues
-# while the next copy exists, so a larger worker count used by an earlier test
+# (a copy that was never created is a no-op), along with any higher copies
+# that exist without a gap, so a larger worker count used by an earlier test
 # run is covered too. Only names ending in the workspace suffix are touched.
 # Returns nonzero when the copies could not be dropped.
 drop_parallel_test_databases() {
@@ -263,14 +263,16 @@ drop_parallel_test_databases() {
     end
     ActiveRecord::Base.configurations.configs_for(env_name: "test").each do |db_config|
       next unless db_config.database.to_s.end_with?(suffix)
-      (0..).each do |worker|
-        copy = ActiveRecord::DatabaseConfigurations::HashConfig.new(
+      copy = lambda do |worker|
+        ActiveRecord::DatabaseConfigurations::HashConfig.new(
           db_config.env_name, db_config.name,
           db_config.configuration_hash.merge(database: "#{db_config.database}_#{worker}")
         )
-        break if worker >= workers && !exists.call(copy)
-        ActiveRecord::Tasks::DatabaseTasks.drop(copy)
       end
+      count = workers
+      count += 1 while exists.call(copy.call(count))
+      # Highest first, so a failed drop leaves an unbroken run for a retry.
+      (count - 1).downto(0) { |worker| ActiveRecord::Tasks::DatabaseTasks.drop(copy.call(worker)) }
     end
   ' 2>/dev/null; then
     ok "Parallel test databases dropped"

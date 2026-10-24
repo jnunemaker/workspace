@@ -583,7 +583,7 @@ for drop_function in drop_workspace_databases drop_workspace_databases_strict; d
   : > "$WORKSPACE_TEST_DROP_LOG"
   PARALLEL_WORKERS=64 "$drop_function" >/dev/null 2>&1
   assert_equal "$drop_function drops exactly the suffixed worker copies" \
-    "$(seq 0 63 | sed 's/^/test:app_test_parallel-ws_/')" \
+    "$(seq 63 -1 0 | sed 's/^/test:app_test_parallel-ws_/')" \
     "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 done
 
@@ -592,7 +592,7 @@ done
 : > "$WORKSPACE_TEST_DROP_LOG"
 PARALLEL_WORKERS=2 WORKSPACE_TEST_EXISTING_COPIES=70 drop_workspace_databases_strict >/dev/null 2>&1
 assert_equal "cleanup continues while higher worker copies exist" \
-  "$(seq 0 69 | sed 's/^/test:app_test_parallel-ws_/')" \
+  "$(seq 69 -1 0 | sed 's/^/test:app_test_parallel-ws_/')" \
   "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 
 # Strict cleanup keeps the registry entry for a retry when the copies remain;
