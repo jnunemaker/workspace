@@ -525,6 +525,16 @@ module Rails
 end
 
 module ActiveRecord
+  class NoDatabaseError < StandardError; end
+
+  # Copies <name>_0 up to WORKSPACE_TEST_EXISTING_COPIES - 1 exist.
+  Pool = Struct.new(:db_config) do
+    def with_connection
+      worker = db_config.database[/_(\d+)\z/, 1].to_i
+      raise NoDatabaseError if worker >= ENV.fetch("WORKSPACE_TEST_EXISTING_COPIES", "0").to_i
+    end
+  end
+
   module DatabaseConfigurations
     HashConfig = Struct.new(:env_name, :name, :configuration_hash) do
       def database = configuration_hash[:database]
@@ -533,6 +543,9 @@ module ActiveRecord
 
   class Base
     def self.configurations = self
+    def self.establish_connection(db_config) = @pool = Pool.new(db_config)
+    def self.connection_pool = @pool
+    def self.remove_connection = @pool = nil
 
     def self.configs_for(env_name:)
       [
@@ -574,12 +587,11 @@ for drop_function in drop_workspace_databases drop_workspace_databases_strict; d
     "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 done
 
-# A literal worker count in the test helper can exceed the processor count.
-mkdir -p test
-printf 'class ActiveSupport::TestCase\n  parallelize(workers: 70)\nend\n' > test/test_helper.rb
+# Copies from an earlier run with more workers than this archive expects are
+# found by checking whether the next copy exists.
 : > "$WORKSPACE_TEST_DROP_LOG"
-drop_workspace_databases_strict >/dev/null 2>&1
-assert_equal "cleanup covers the worker count configured in test_helper.rb" \
+PARALLEL_WORKERS=2 WORKSPACE_TEST_EXISTING_COPIES=70 drop_workspace_databases_strict >/dev/null 2>&1
+assert_equal "cleanup continues while higher worker copies exist" \
   "$(seq 0 69 | sed 's/^/test:app_test_parallel-ws_/')" \
   "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 

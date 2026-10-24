@@ -237,25 +237,38 @@ create_workspace_databases() {
 
 # Drop the per-worker copies Rails parallel testing makes of each workspace
 # test database (<name>_0, <name>_1, ...), which db:drop does not know about.
-# Covers the processor count, PARALLEL_WORKERS, and a literal
-# parallelize(workers: N) in test/test_helper.rb. Only names ending in the
-# workspace suffix are touched; dropping a copy that was never created is a
-# no-op. Returns nonzero when the copies could not be dropped.
+# Copies up to the processor count or PARALLEL_WORKERS are dropped outright
+# (a copy that was never created is a no-op); past that, dropping continues
+# while the next copy exists, so a larger worker count used by an earlier test
+# run is covered too. Only names ending in the workspace suffix are touched.
+# Returns nonzero when the copies could not be dropped.
 drop_parallel_test_databases() {
   step "Dropping parallel test databases"
   if RAILS_ENV=test VERBOSE=false bin/rails runner '
     require "etc"
     suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
-    helper = Rails.root.join("test/test_helper.rb")
-    configured = helper.file? ? helper.read[/parallelize\(\s*workers:\s*(\d+)/, 1].to_i : 0
-    workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i, configured].max
+    workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i].max
+    exists = lambda do |db_config|
+      if db_config.configuration_hash[:adapter].to_s.include?("sqlite")
+        File.exist?(Rails.root.join(db_config.database))
+      else
+        ActiveRecord::Base.establish_connection(db_config)
+        ActiveRecord::Base.connection_pool.with_connection(&:verify!)
+        true
+      end
+    rescue ActiveRecord::NoDatabaseError
+      false
+    ensure
+      ActiveRecord::Base.remove_connection
+    end
     ActiveRecord::Base.configurations.configs_for(env_name: "test").each do |db_config|
       next unless db_config.database.to_s.end_with?(suffix)
-      workers.times do |worker|
+      (0..).each do |worker|
         copy = ActiveRecord::DatabaseConfigurations::HashConfig.new(
           db_config.env_name, db_config.name,
           db_config.configuration_hash.merge(database: "#{db_config.database}_#{worker}")
         )
+        break if worker >= workers && !exists.call(copy)
         ActiveRecord::Tasks::DatabaseTasks.drop(copy)
       end
     end
