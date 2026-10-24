@@ -263,7 +263,9 @@ printf 'archive-hook:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_
 SCRIPT
 cat > bin/rails <<'SCRIPT'
 #!/usr/bin/env workspace-test-runtime
-printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$1" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
+# Log only the subcommand for runner, whose argument is a multi-line script.
+[ "$1" = runner ] && set -- runner
+printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
 SCRIPT
 chmod +x "$toolchain_bin/workspace-test-runtime" "$toolchain_bin/lsof" \
   "$toolchain_bin/foreman" bin/workspace-run-hook bin/workspace-toolchain-check \

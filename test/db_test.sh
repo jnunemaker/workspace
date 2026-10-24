@@ -517,13 +517,11 @@ app_dir=$(create_fake_app "parallel-test-drop")
 cd "$app_dir"
 printf 'test:\n  database: app_test\n' > config/database.yml
 cat > fake_active_record.rb <<'RUBY'
-Config = Struct.new(:env_name, :name, :configuration_hash) do
-  def database = configuration_hash[:database]
-end
-
 module ActiveRecord
   module DatabaseConfigurations
-    HashConfig = ::Config
+    HashConfig = Struct.new(:env_name, :name, :configuration_hash) do
+      def database = configuration_hash[:database]
+    end
   end
 
   class Base
@@ -531,8 +529,8 @@ module ActiveRecord
 
     def self.configs_for(env_name:)
       [
-        Config.new(env_name, "primary", { database: "app_test#{ENV.fetch("WORKSPACE_DB_SUFFIX")}" }),
-        Config.new(env_name, "shared", { database: "shared_test" })
+        DatabaseConfigurations::HashConfig.new(env_name, "primary", { database: "app_test#{ENV.fetch("WORKSPACE_DB_SUFFIX")}" }),
+        DatabaseConfigurations::HashConfig.new(env_name, "shared", { database: "shared_test" })
       ]
     end
   end
@@ -563,10 +561,9 @@ export WORKSPACE_TEST_DROP_LOG
 for drop_function in drop_workspace_databases drop_workspace_databases_strict; do
   : > "$WORKSPACE_TEST_DROP_LOG"
   PARALLEL_WORKERS=64 "$drop_function" >/dev/null 2>&1
-  assert_equal "$drop_function drops every parallel worker copy" "64" "$(grep -c '^test:app_test_parallel-ws_[0-9]*$' "$WORKSPACE_TEST_DROP_LOG")"
-  assert_true "$drop_function drops the first worker copy" grep -q '^test:app_test_parallel-ws_0$' "$WORKSPACE_TEST_DROP_LOG"
-  assert_true "$drop_function drops the last worker copy" grep -q '^test:app_test_parallel-ws_63$' "$WORKSPACE_TEST_DROP_LOG"
-  assert_false "$drop_function leaves databases without the workspace suffix" grep -q 'shared_test' "$WORKSPACE_TEST_DROP_LOG"
+  assert_equal "$drop_function drops exactly the suffixed worker copies" \
+    "$(seq 0 63 | sed 's/^/test:app_test_parallel-ws_/')" \
+    "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 done
 unset PARALLEL_WORKERS WORKSPACE_TEST_DROP_LOG
 

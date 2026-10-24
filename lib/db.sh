@@ -236,9 +236,8 @@ create_workspace_databases() {
 }
 
 # Drop the per-worker copies Rails parallel testing makes of each workspace
-# test database (<name>_0, <name>_1, ...). db:drop only knows the configured
-# names, so these were left behind. Only names carrying the workspace suffix
-# are touched; dropping a copy that was never created is a no-op.
+# test database (<name>_0, <name>_1, ...), which db:drop does not know about.
+# Only names carrying the workspace suffix are touched; dropping a copy that was never created is a no-op.
 drop_parallel_test_databases() {
   step "Dropping parallel test databases"
   if RAILS_ENV=test VERBOSE=false bin/rails runner '
