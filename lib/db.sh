@@ -245,6 +245,8 @@ create_workspace_databases() {
 drop_parallel_test_databases() {
   step "Dropping parallel test databases"
   if RAILS_ENV=test VERBOSE=false bin/rails runner '
+    # Parallel testing arrived in Rails 6.0; the configuration API used here in 6.1.
+    exit if ActiveRecord.version < Gem::Version.new("6.1")
     require "etc"
     suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
     workers = [Etc.nprocessors, ENV["PARALLEL_WORKERS"].to_i].max

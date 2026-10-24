@@ -527,6 +527,8 @@ end
 module ActiveRecord
   class NoDatabaseError < StandardError; end
 
+  def self.version = Gem::Version.new(ENV.fetch("WORKSPACE_TEST_RAILS_VERSION", "8.1.4"))
+
   # Copies <name>_0 up to WORKSPACE_TEST_EXISTING_COPIES - 1 exist.
   Pool = Struct.new(:db_config) do
     def with_connection
@@ -594,6 +596,12 @@ PARALLEL_WORKERS=2 WORKSPACE_TEST_EXISTING_COPIES=70 drop_workspace_databases_st
 assert_equal "cleanup continues while higher worker copies exist" \
   "$(seq 69 -1 0 | sed 's/^/test:app_test_parallel-ws_/')" \
   "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
+
+# Rails before 6.1 lacks the configuration API, so cleanup skips the copies
+# rather than failing a strict archive.
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_true "strict cleanup succeeds on Rails before 6.1" env WORKSPACE_TEST_RAILS_VERSION=6.0.6 sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=parallel-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_equal "Rails before 6.1 drops no parallel copies" "" "$(grep -v ':db:drop$' "$WORKSPACE_TEST_DROP_LOG")"
 
 # Strict cleanup keeps the registry entry for a retry when the copies remain;
 # legacy cleanup only warns.
