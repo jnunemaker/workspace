@@ -117,6 +117,7 @@ exit 1
 SCRIPT
 cat > bin/rails <<'SCRIPT'
 #!/bin/sh
+[ "$1" = runner ] && { echo workspace-suffix-checked; exit 0; }
 printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_ARCHIVE_LOG"
 SCRIPT
 cat > bin/workspace-archive-hook <<'SCRIPT'
@@ -262,6 +263,7 @@ printf 'archive-hook:%s\n' "$WORKSPACE_DB_SUFFIX" >> "$WORKSPACE_TEST_TOOLCHAIN_
 SCRIPT
 cat > bin/rails <<'SCRIPT'
 #!/usr/bin/env workspace-test-runtime
+[ "$1" = runner ] && { echo workspace-suffix-checked; exit 0; }
 printf 'rails:%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_TOOLCHAIN_LOG"
 SCRIPT
 chmod +x "$toolchain_bin/workspace-test-runtime" "$toolchain_bin/lsof" \

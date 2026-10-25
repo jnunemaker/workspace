@@ -387,6 +387,7 @@ exit 0
 EOF
 cat > bin/rails <<'EOF'
 #!/bin/sh
+[ "$1" = runner ] && { echo workspace-suffix-checked; exit 0; }
 printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_PRUNE_LOG"
 EOF
 cat > bin/workspace-archive-hook <<'EOF'
@@ -484,6 +485,7 @@ chmod +x "$fake_bin/lsof"
 lsof_log="$TEST_TMP/lsof.log"
 cat > bin/rails <<'EOF'
 #!/bin/sh
+[ "$1" = runner ] && { echo workspace-suffix-checked; exit 0; }
 printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_PRUNE_LOG"
 [ -n "${WORKSPACE_TEST_DB_DROP_FAIL:-}" ] && exit 1
 exit 0
