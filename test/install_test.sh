@@ -15,7 +15,7 @@ cat > "$fake_bin/git" <<'SCRIPT'
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_GIT_LOG"
 if [ "$1" = "clone" ]; then
-  eval "dest=\${$#}"
+  for dest; do :; done
   mkdir -p "$dest/bin" "$dest/lib"
   printf '#!/bin/sh\n' > "$dest/bin/workspace"
   printf 'printf "skill\\n" >> "$FAKE_GIT_LOG"\n' > "$dest/lib/install_skill.sh"
@@ -52,7 +52,6 @@ for shell in bash sh; do
     if [ -s "$git_log" ] || [ -e "$home/.workspace" ] || [ -s "$home/.zshrc" ]; then
       partial_ran="$partial_ran $n"
     fi
-    rm -rf "$home"
     n=$((n + 1))
   done
   assert_equal "truncated install via $shell runs nothing (lines that acted:$partial_ran)" "" "$partial_ran"

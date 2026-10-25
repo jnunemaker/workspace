@@ -80,4 +80,4 @@ main() {
   echo "  export PATH=\"$BIN_DIR:\$PATH\""
 }
 
-main "$@"
+main
