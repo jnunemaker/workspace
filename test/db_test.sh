@@ -519,12 +519,16 @@ cd "$app_dir"
 printf 'development:\n  database: app_development\n' > config/database.yml
 cat > fake_active_record.rb <<'RUBY'
 module ActiveRecord
-  def self.version = Gem::Version.new(ENV.fetch("WORKSPACE_TEST_RAILS_VERSION", "8.1.4"))
+  def self.version
+    Gem::Version.new(ENV.fetch("WORKSPACE_TEST_RAILS_VERSION", "8.1.4"))
+  end
 
   DbConfig = Struct.new(:database)
 
   class Base
-    def self.configurations = self
+    def self.configurations
+      self
+    end
 
     def self.configs_for(env_name:)
       if env_name == "development"
