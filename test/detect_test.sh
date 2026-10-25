@@ -4,29 +4,6 @@
 cd "$(dirname "$0")"
 . ./test_helper.sh
 
-# ── detect_db_type ───────────────────────────────────────────────
-
-# PostgreSQL (default when no Gemfile)
-app_dir=$(create_fake_app "pg-app")
-cd "$app_dir"
-rm -f Gemfile
-detect_db_type
-assert_equal "no Gemfile → postgresql" "postgresql" "$DB_TYPE"
-
-# PostgreSQL from Gemfile
-app_dir=$(create_fake_app "pg-app2")
-cd "$app_dir"
-echo 'gem "pg"' >> Gemfile
-detect_db_type
-assert_equal "pg gem → postgresql" "postgresql" "$DB_TYPE"
-
-# MySQL from Gemfile
-app_dir=$(create_fake_app "mysql-app")
-cd "$app_dir"
-echo 'gem "mysql2"' >> Gemfile
-detect_db_type
-assert_equal "mysql2 gem → mysql" "mysql" "$DB_TYPE"
-
 # ── detect_caddy ─────────────────────────────────────────────────
 
 # No Procfile.dev

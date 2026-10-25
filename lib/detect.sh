@@ -2,17 +2,6 @@
 # Auto-detection functions for workspace CLI.
 # Sourced by subcommands that need to detect app characteristics.
 
-# Detect database type from Gemfile.
-# Sets: DB_TYPE ("postgresql" or "mysql")
-detect_db_type() {
-  DB_TYPE="postgresql"
-  if [ -f Gemfile ]; then
-    if grep -q '"mysql2"' Gemfile 2>/dev/null || grep -q "'mysql2'" Gemfile 2>/dev/null; then
-      DB_TYPE="mysql"
-    fi
-  fi
-}
-
 # Detect if the app uses Caddy (reverse proxy).
 # Sets: USES_CADDY (true/false)
 detect_caddy() {
