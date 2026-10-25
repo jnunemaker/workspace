@@ -235,6 +235,37 @@ create_workspace_databases() {
   fi
 }
 
+# Check that every development and test database db:drop could remove in
+# RAILS_ENV=$1 ends in the workspace suffix. Without the suffix (a branch or
+# checkout whose database.yml was never patched), db:drop would remove the
+# root checkout's databases, and SQLite files under the shared storage/ link.
+# Uses the same configurations db:drop does; Rails before 6.1 lacks that API
+# and is not checked. Returns nonzero, with a warning, when it is not safe.
+workspace_databases_suffixed() {
+  _suffix_check=$(RAILS_ENV="$1" VERBOSE=false bin/rails runner '
+    if ActiveRecord.version >= Gem::Version.new("6.1")
+      suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
+      %w[development test].each do |env|
+        ActiveRecord::Base.configurations.configs_for(env_name: env).each do |db_config|
+          name = db_config.database.to_s
+          puts "workspace-unsuffixed: #{name}" unless name.end_with?(suffix) || name == ":memory:"
+        end
+      end
+    end
+    puts "workspace-suffix-checked"
+  ' 2>/dev/null) || _suffix_check=""
+
+  _unsuffixed=$(printf '%s\n' "$_suffix_check" | sed -n 's/^workspace-unsuffixed: //p' | paste -sd ' ' -)
+  if [ -n "$_unsuffixed" ]; then
+    warn "Refusing to drop $1 databases without the $WORKSPACE_DB_SUFFIX suffix: $_unsuffixed"
+    return 1
+  fi
+  if ! printf '%s\n' "$_suffix_check" | grep -qx 'workspace-suffix-checked'; then
+    warn "Could not check $1 database names — not dropping them"
+    return 1
+  fi
+}
+
 # Drop workspace-specific databases.
 drop_workspace_databases() {
   if is_default_workspace; then
@@ -245,17 +276,23 @@ drop_workspace_databases() {
     return 1
   fi
 
+  [ -x bin/rails ] || return 0
+
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
 
   header "Dropping workspace databases"
 
   step "Dropping dev database"
-  RAILS_ENV=development bin/rails db:drop 2>/dev/null || true
-  ok "Dev database dropped"
+  if workspace_databases_suffixed development; then
+    RAILS_ENV=development bin/rails db:drop 2>/dev/null || true
+    ok "Dev database dropped"
+  fi
 
   step "Dropping test database"
-  RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
-  ok "Test database dropped"
+  if workspace_databases_suffixed test; then
+    RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
+    ok "Test database dropped"
+  fi
 }
 
 # Drop databases for unattended reconciliation. Unlike the legacy archive path,
@@ -280,7 +317,9 @@ drop_workspace_databases_strict() {
   header "Dropping workspace databases"
 
   step "Dropping dev database"
-  if RAILS_ENV=development bin/rails db:drop 2>/dev/null; then
+  if ! workspace_databases_suffixed development; then
+    _drop_failed=1
+  elif RAILS_ENV=development bin/rails db:drop 2>/dev/null; then
     ok "Dev database dropped"
   else
     warn "Could not drop dev database"
@@ -288,7 +327,9 @@ drop_workspace_databases_strict() {
   fi
 
   step "Dropping test database"
-  if RAILS_ENV=test bin/rails db:drop 2>/dev/null; then
+  if ! workspace_databases_suffixed test; then
+    _drop_failed=1
+  elif RAILS_ENV=test bin/rails db:drop 2>/dev/null; then
     ok "Test database dropped"
   else
     warn "Could not drop test database"

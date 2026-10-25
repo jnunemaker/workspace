@@ -206,6 +206,7 @@ exec sh "$WORKSPACE_HOME/lib/archive.sh"
 EOF
 cat > "$identity_worktree/bin/rails" <<'EOF'
 #!/bin/sh
+[ "$1" = runner ] && { echo workspace-suffix-checked; exit 0; }
 printf '%s:%s:%s\n' "$RAILS_ENV" "$WORKSPACE_DB_SUFFIX" "$*" >> "$WORKSPACE_TEST_NATIVE_CLEANUP_LOG"
 EOF
 chmod +x "$identity_worktree/bin/workspace" "$identity_worktree/bin/rails"

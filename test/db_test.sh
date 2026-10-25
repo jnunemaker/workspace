@@ -508,4 +508,88 @@ chmod +x bin/rails
 WORKSPACE_NAME="strict-failure-ws"
 assert_false "strict cleanup reports Rails drop failures" drop_workspace_databases_strict
 
+# ── refuse to drop databases without the workspace suffix ───────
+
+# A database.yml that never got the workspace suffix resolves to the root
+# checkout's databases, so cleanup must not drop them. The stand-in for
+# bin/rails runs the runner code against a stub ActiveRecord whose test
+# database is WORKSPACE_TEST_TEST_DATABASE.
+app_dir=$(create_fake_app "unsuffixed-drop")
+cd "$app_dir"
+printf 'development:\n  database: app_development\n' > config/database.yml
+cat > fake_active_record.rb <<'RUBY'
+module ActiveRecord
+  def self.version
+    Gem::Version.new(ENV.fetch("WORKSPACE_TEST_RAILS_VERSION", "8.1.4"))
+  end
+
+  DbConfig = Struct.new(:database)
+
+  class Base
+    def self.configurations
+      self
+    end
+
+    def self.configs_for(env_name:)
+      if env_name == "development"
+        [DbConfig.new("app_development#{ENV.fetch("WORKSPACE_DB_SUFFIX")}")]
+      else
+        [DbConfig.new(ENV.fetch("WORKSPACE_TEST_TEST_DATABASE"))]
+      end
+    end
+  end
+end
+
+eval(ARGV.fetch(0))
+RUBY
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+case "$1" in
+  db:drop) printf '%s\n' "$RAILS_ENV" >> "$WORKSPACE_TEST_DROP_LOG" ;;
+  runner) [ -z "${WORKSPACE_TEST_RUNNER_FAILS:-}" ] || exit 1; exec ruby fake_active_record.rb "$2" ;;
+esac
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="suffix-ws"
+WORKSPACE_TEST_DROP_LOG="$TEST_TMP/unsuffixed-drop.log"
+export WORKSPACE_TEST_DROP_LOG
+
+unsuffixed_drop_output="$TEST_TMP/unsuffixed-drop.out"
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_false "strict cleanup refuses unsuffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" > "$unsuffixed_drop_output" 2>&1
+assert_equal "strict cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
+assert_true "refusal names the unsuffixed database" grep -q 'without the _suffix-ws suffix: app_test$' "$unsuffixed_drop_output"
+
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_true "legacy cleanup warns instead of failing" env WORKSPACE_TEST_TEST_DATABASE=app_test \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_equal "legacy cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
+
+# Another workspace whose name starts with this one is not a match.
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_false "a longer workspace name is not this suffix" env WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-wsx \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_true "strict cleanup drops suffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_equal "suffixed databases are dropped in both environments" "development
+test" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
+
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_true "an in-memory test database needs no suffix" env WORKSPACE_TEST_TEST_DATABASE=:memory: \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_false "strict cleanup fails when names cannot be checked" env WORKSPACE_TEST_RUNNER_FAILS=1 WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_equal "nothing is dropped when names cannot be checked" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
+
+# Rails before 6.1 lacks the configuration API, so names are not checked.
+: > "$WORKSPACE_TEST_DROP_LOG"
+assert_true "Rails before 6.1 keeps the previous cleanup" env WORKSPACE_TEST_RAILS_VERSION=6.0.6 WORKSPACE_TEST_TEST_DATABASE=app_test \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+unset WORKSPACE_TEST_DROP_LOG
+
 report "db.sh"
