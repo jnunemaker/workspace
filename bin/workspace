@@ -113,8 +113,13 @@ EOF
     if [ -d "$WORKSPACE_HOME/.git" ]; then
       git -C "$WORKSPACE_HOME" pull origin main --quiet
     else
-      # Re-install from scratch
-      curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh | bash
+      # Re-install from scratch. Download the whole installer first so a failed
+      # or partial download stops here instead of piping it into bash.
+      _installer=$(curl -fsSL https://raw.githubusercontent.com/jnunemaker/workspace/main/install.sh) || {
+        echo "workspace update: could not download the installer" >&2
+        exit 1
+      }
+      printf '%s\n' "$_installer" | bash
       exit $?
     fi
     sh "$WORKSPACE_HOME/lib/install_skill.sh"

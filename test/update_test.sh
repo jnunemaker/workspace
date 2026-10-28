@@ -35,7 +35,11 @@ SCRIPT
 cat > "$fake_bin/curl" <<'SCRIPT'
 #!/bin/sh
 printf 'curled\n' >> "$FAKE_CURL_MARKER"
-printf 'exit 97\n'
+case "${FAKE_CURL_MODE:-}" in
+  fail) exit 22 ;;
+  partial) printf 'echo partial-installer-ran\n'; exit 18 ;;
+  *) printf 'echo installer-ran\nexit 7\n' ;;
+esac
 SCRIPT
 
 cat > "$fake_workspace/lib/install_skill.sh" <<'SCRIPT'
@@ -167,5 +171,31 @@ workspace updated to $new_version"
 assert_equal "changed update reports the new version" "$expected" "$output"
 
 assert_equal "skill installation still runs after every update" "2" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+# Standalone installs (no .git) re-run the installer. A failed or partial
+# download must fail loudly instead of piping nothing into bash.
+for curl_mode in fail partial; do
+  rm -f "$curl_marker"
+  curl_output="$TEST_TMP/update-curl-$curl_mode.out"
+  curl_error="$TEST_TMP/update-curl-$curl_mode.err"
+  env PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$standalone_workspace" \
+    FAKE_CURL_MARKER="$curl_marker" FAKE_CURL_MODE="$curl_mode" \
+    "$WORKSPACE_HOME/bin/workspace" update >"$curl_output" 2>"$curl_error"
+  curl_status=$?
+
+  assert_true "standalone update downloads the installer ($curl_mode)" [ -e "$curl_marker" ]
+  assert_false "standalone update fails when the download fails ($curl_mode)" [ "$curl_status" -eq 0 ]
+  assert_true "standalone update explains a failed download ($curl_mode)" grep -q "could not download the installer" "$curl_error"
+  assert_false "standalone update runs nothing from a failed download ($curl_mode)" grep -q "partial-installer-ran" "$curl_output"
+done
+
+output=$(env PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$standalone_workspace" \
+  FAKE_CURL_MARKER="$curl_marker" \
+  "$WORKSPACE_HOME/bin/workspace" update 2>&1)
+curl_status=$?
+expected="Checking for workspace CLI updates...
+installer-ran"
+assert_equal "standalone update runs a downloaded installer" "$expected" "$output"
+assert_equal "standalone update exits with the installer's status" "7" "$curl_status"
 
 report "workspace update"
