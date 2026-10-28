@@ -38,8 +38,7 @@ printf 'curled\n' >> "$FAKE_CURL_MARKER"
 case "${FAKE_CURL_MODE:-}" in
   fail) exit 22 ;;
   partial) printf 'echo partial-installer-ran\n'; exit 18 ;;
-  install) printf 'echo installer-ran\nexit 7\n' ;;
-  *) printf 'exit 97\n' ;;
+  *) printf 'echo installer-ran\nexit 7\n' ;;
 esac
 SCRIPT
 
@@ -191,7 +190,7 @@ for curl_mode in fail partial; do
 done
 
 output=$(env PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$standalone_workspace" \
-  FAKE_CURL_MARKER="$curl_marker" FAKE_CURL_MODE="install" \
+  FAKE_CURL_MARKER="$curl_marker" \
   "$WORKSPACE_HOME/bin/workspace" update 2>&1)
 curl_status=$?
 expected="Checking for workspace CLI updates...
