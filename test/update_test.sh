@@ -198,4 +198,20 @@ installer-ran"
 assert_equal "standalone update runs a downloaded installer" "$expected" "$output"
 assert_equal "standalone update exits with the installer's status" "7" "$curl_status"
 
+# A linked Git worktree or submodule has a .git file, not a directory. Update it
+# with git rather than reinstalling, which would delete the checkout.
+worktree_workspace="$TEST_TMP/worktree-workspace"
+mkdir -p "$worktree_workspace/lib"
+printf 'gitdir: /somewhere/.git/worktrees/dev\n' > "$worktree_workspace/.git"
+printf 'uncommitted\n' > "$worktree_workspace/notes.txt"
+cp "$fake_workspace/lib/install_skill.sh" "$worktree_workspace/lib/install_skill.sh"
+rm -f "$pull_marker" "$curl_marker"
+env PATH="$fake_bin:/usr/bin:/bin" WORKSPACE_HOME="$worktree_workspace" \
+  FAKE_GIT_STATE="$git_state" FAKE_GIT_PULL_MARKER="$pull_marker" \
+  FAKE_CURL_MARKER="$curl_marker" UPDATE_INSTALL_MARKER="$install_marker" \
+  "$WORKSPACE_HOME/bin/workspace" update >/dev/null 2>&1
+assert_true "worktree update pulls with git" [ -e "$pull_marker" ]
+assert_false "worktree update does not download the installer" [ -e "$curl_marker" ]
+assert_true "worktree update keeps the checkout's files" [ -f "$worktree_workspace/notes.txt" ]
+
 report "workspace update"
