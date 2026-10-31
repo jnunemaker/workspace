@@ -17,7 +17,8 @@ main() {
   echo "Installing workspace CLI..."
 
   # Clone or update the repo
-  if [ -d "$WORKSPACE_HOME/.git" ]; then
+  # -e, not -d: .git is a file in a linked worktree or submodule.
+  if [ -e "$WORKSPACE_HOME/.git" ]; then
     echo "  Updating existing installation..."
     git -C "$WORKSPACE_HOME" pull origin main --quiet
   else

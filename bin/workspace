@@ -110,7 +110,8 @@ EOF
       exit 0
     fi
     echo "Checking for workspace CLI updates..."
-    if [ -d "$WORKSPACE_HOME/.git" ]; then
+    # -e, not -d: .git is a file in a linked worktree or submodule.
+    if [ -e "$WORKSPACE_HOME/.git" ]; then
       git -C "$WORKSPACE_HOME" pull origin main --quiet
     else
       # Re-install from scratch. Download the whole installer first so a failed

@@ -23,15 +23,21 @@ fi
 SCRIPT
 chmod +x "$fake_bin/git"
 
-# Run installer text from stdin the way the README does, in a fresh fake HOME.
+# Run installer text from stdin the way the README does.
+run_installer() {
+  local shell="$1" home="$2"
+  env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$home" SHELL=/bin/zsh \
+    WORKSPACE_HOME="$home/.workspace" FAKE_GIT_LOG="$git_log" \
+    "$shell" >/dev/null 2>&1
+}
+
+# The same, in a fresh fake HOME.
 run_piped() {
   local shell="$1" home="$2"
   rm -rf "$home" "$git_log"
   mkdir -p "$home"
   : > "$home/.zshrc"
-  env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$home" SHELL=/bin/zsh \
-    WORKSPACE_HOME="$home/.workspace" FAKE_GIT_LOG="$git_log" \
-    "$shell" >/dev/null 2>&1
+  run_installer "$shell" "$home"
 }
 
 # A full download installs: clones, updates the profile, links the skill.
@@ -56,5 +62,20 @@ for shell in bash sh; do
   done
   assert_equal "truncated install via $shell runs nothing (lines that acted:$partial_ran)" "" "$partial_ran"
 done
+
+# An install that is a linked Git worktree (.git is a file) is updated with git,
+# never removed and cloned again.
+home="$TEST_TMP/home-worktree"
+rm -f "$git_log"
+mkdir -p "$home/.workspace/bin" "$home/.workspace/lib"
+: > "$home/.zshrc"
+printf 'gitdir: /somewhere/.git/worktrees/dev\n' > "$home/.workspace/.git"
+printf '#!/bin/sh\n' > "$home/.workspace/bin/workspace"
+: > "$home/.workspace/lib/install_skill.sh"
+printf 'uncommitted\n' > "$home/.workspace/notes.txt"
+run_installer bash "$home" < "$installer"
+assert_true "worktree install pulls with git" grep -q ' pull origin main' "$git_log"
+assert_false "worktree install does not clone" grep -q '^clone ' "$git_log"
+assert_true "worktree install keeps the checkout's files" [ -f "$home/.workspace/notes.txt" ]
 
 report "install.sh"
