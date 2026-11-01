@@ -81,6 +81,7 @@ enter_project_root() {
     [ "$_project_dir" != "$_project_top" ] && [ "$_project_dir" != "/" ] || return 0
     _project_dir=$(dirname "$_project_dir")
   done
+  WORKSPACE_HOME=$(CDPATH= cd -- "$WORKSPACE_HOME" && pwd -P)
   cd "$_project_dir"
 }
 

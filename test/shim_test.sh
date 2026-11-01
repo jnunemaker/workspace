@@ -124,6 +124,13 @@ output="$TEST_TMP/subdir-info.out"
 WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" info >"$output" 2>&1
 assert_true "info from a subdirectory finds the project's marker" grep -q '^Identity source: .workspace$' "$output"
 
+# A relative WORKSPACE_HOME keeps working after the move.
+relative_home=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1]))' "$WORKSPACE_HOME" 2>/dev/null || true)
+if [ -n "$relative_home" ]; then
+  WORKSPACE_HOME="$relative_home" WORKSPACE_PORT=51260 "$relative_home/bin/workspace" info >"$output" 2>&1
+  assert_true "a relative WORKSPACE_HOME survives the move" grep -q '^Identity source: .workspace$' "$output"
+fi
+
 : > "$rails_log"
 WORKSPACE_TEST_RAILS_LOG="$rails_log" WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" archive >/dev/null 2>&1
 assert_true "archive from a subdirectory drops the databases" grep -q "^$sub_worktree db:drop$" "$rails_log"
