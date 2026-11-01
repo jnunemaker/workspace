@@ -39,6 +39,7 @@ make_run_app() {
 } > "$WORKSPACE_TEST_RUN_LOG"
 SCRIPT
   chmod +x "$app_dir/bin/foreman"
+  touch "$app_dir/Procfile.dev"
   printf '%s\n' "$app_dir|$root_dir"
 }
 
@@ -224,6 +225,7 @@ toolchain_bin="$TEST_TMP/lifecycle-toolchain-bin"
 toolchain_log="$TEST_TMP/lifecycle-toolchain.log"
 mkdir -p "$toolchain_bin" "$toolchain_app/config"
 cd "$toolchain_app"
+touch Procfile.dev
 cat > config/database.yml <<'YAML'
 development:
   database: toolchain_development
@@ -369,5 +371,50 @@ assert_false "root run ignores identity hook" [ -f .identity-hook-called ]
 assert_true "root archive exits without isolation" env CONDUCTOR_ROOT_PATH="$root_dir" sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1
 assert_false "root archive ignores identity hook" [ -f .identity-hook-called ]
 assert_false "root archive does not run isolated archive hook" [ -f .archive-hook-called ]
+
+# The sweep stops what is on the workspace's ports, so run must not reach it
+# when foreman cannot start the replacement.
+sweep_bin="$TEST_TMP/sweep-bin"
+mkdir -p "$sweep_bin"
+cat > "$sweep_bin/lsof" <<'SCRIPT'
+#!/bin/sh
+echo swept >> "$WORKSPACE_TEST_SWEEP_LOG"
+exit 1
+SCRIPT
+chmod +x "$sweep_bin/lsof"
+export WORKSPACE_TEST_SWEEP_LOG="$TEST_TMP/sweep.log"
+
+paths=$(make_run_app "missing-foreman")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+rm "$app_dir/bin/foreman"
+cd "$app_dir"
+: > "$WORKSPACE_TEST_SWEEP_LOG"
+output="$TEST_TMP/missing-foreman.out"
+assert_false "run fails without foreman" env PATH="$sweep_bin:/usr/bin:/bin" CONDUCTOR_WORKSPACE_NAME=missing-foreman \
+  CONDUCTOR_ROOT_PATH="$root_dir" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+assert_true "run names the missing foreman" grep -q 'foreman is not installed' "$output"
+assert_equal "run without foreman stops nothing" "" "$(cat "$WORKSPACE_TEST_SWEEP_LOG")"
+
+paths=$(make_run_app "missing-procfile")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+rm "$app_dir/Procfile.dev"
+cd "$app_dir"
+: > "$WORKSPACE_TEST_SWEEP_LOG"
+output="$TEST_TMP/missing-procfile.out"
+assert_false "run fails without Procfile.dev" env PATH="$sweep_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=missing-procfile \
+  CONDUCTOR_ROOT_PATH="$root_dir" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+assert_true "run names the missing Procfile.dev" grep -q 'Procfile.dev not found' "$output"
+assert_equal "run without Procfile.dev stops nothing" "" "$(cat "$WORKSPACE_TEST_SWEEP_LOG")"
+
+paths=$(make_run_app "present-procfile")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+cd "$app_dir"
+: > "$WORKSPACE_TEST_SWEEP_LOG"
+assert_true "run still sweeps before starting" env PATH="$sweep_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=present-procfile \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$TEST_TMP/present-procfile.log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_equal "run sweeps all ten ports" "10" "$(wc -l < "$WORKSPACE_TEST_SWEEP_LOG" | tr -d ' ')"
 
 report "run lifecycle"

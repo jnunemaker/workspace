@@ -101,6 +101,19 @@ if [ "$USES_VITE" = "true" ]; then
   fi
 fi
 
+# ── Check prerequisites ──────────────────────────────────────────
+
+# The sweep stops whatever is on these ports, so fail before it when the
+# replacement cannot start.
+if [ -z "$FOREMAN_CMD" ]; then
+  err "foreman is not installed. Fix: gem install foreman"
+  exit 1
+fi
+if [ ! -f Procfile.dev ]; then
+  err "Procfile.dev not found. workspace run starts the app with foreman from that file."
+  exit 1
+fi
+
 # ── Sweep ports ──────────────────────────────────────────────────
 
 for offset in $(seq 0 9); do
@@ -115,13 +128,6 @@ done
 
 if [ -x bin/workspace-run-hook ]; then
   . bin/workspace-run-hook
-fi
-
-# ── Check for foreman ────────────────────────────────────────────
-
-if [ -z "$FOREMAN_CMD" ]; then
-  err "foreman is not installed. Fix: gem install foreman"
-  exit 1
 fi
 
 # ── Start server ─────────────────────────────────────────────────
