@@ -508,6 +508,46 @@ chmod +x bin/rails
 WORKSPACE_NAME="strict-failure-ws"
 assert_false "strict cleanup reports Rails drop failures" drop_workspace_databases_strict
 
+# ── report the real db:drop result ──────────────────────────────
+
+# Checks pass, then db:drop fails the way an in-use Postgres database does.
+app_dir=$(create_fake_app "drop-result")
+cd "$app_dir"
+touch config/database.yml
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+case "$*" in
+  runner*) echo workspace-suffix-checked; exit 0 ;;
+esac
+echo "database is being accessed by other users" >&2
+exit 1
+SCRIPT
+chmod +x bin/rails
+drop_output="$TEST_TMP/drop-result.out"
+assert_true "legacy cleanup still finishes when db:drop fails" \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases; [ "$WORKSPACE_DROP_INCOMPLETE" = 1 ]' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
+assert_false "failed drops are not reported as dropped" grep -q 'database dropped' "$drop_output"
+assert_true "a failed dev drop is reported" grep -q 'Could not drop Dev database' "$drop_output"
+assert_true "a failed test drop is reported" grep -q 'Could not drop Test database' "$drop_output"
+assert_true "the failure shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
+
+assert_false "strict cleanup fails when db:drop fails" \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
+assert_true "strict cleanup shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+case "$*" in
+  runner*) echo workspace-suffix-checked ;;
+  *) echo "Dropped database"; echo "noise" >&2 ;;
+esac
+SCRIPT
+assert_true "legacy cleanup succeeds when db:drop does" \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases; [ -z "$WORKSPACE_DROP_INCOMPLETE" ]' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
+assert_true "a successful drop is reported" grep -q 'Dev database dropped' "$drop_output"
+assert_true "Rails output still reaches the terminal" grep -q 'Dropped database' "$drop_output"
+assert_false "stderr from a successful drop stays hidden" grep -q 'noise' "$drop_output"
+
 # ── refuse to drop databases without the workspace suffix ───────
 
 # A database.yml that never got the workspace suffix resolves to the root

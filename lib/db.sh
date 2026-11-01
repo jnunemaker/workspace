@@ -266,6 +266,19 @@ workspace_databases_suffixed() {
   fi
 }
 
+# Run db:drop in RAILS_ENV=$1 and report the real result under the label $2,
+# with what Rails said when it failed. Returns db:drop's status.
+drop_workspace_database() {
+  { _drop_errors=$(RAILS_ENV="$1" bin/rails db:drop 2>&1 >&3 3>&-); _drop_status=$?; } 3>&1
+  if [ "$_drop_status" -eq 0 ]; then
+    ok "$2 database dropped"
+    return 0
+  fi
+  warn "Could not drop $2 database"
+  [ -z "$_drop_errors" ] || printf '%s\n' "$_drop_errors" | head -n 5 | sed 's/^/    /'
+  return "$_drop_status"
+}
+
 # Drop workspace-specific databases.
 drop_workspace_databases() {
   if is_default_workspace; then
@@ -282,16 +295,18 @@ drop_workspace_databases() {
 
   header "Dropping workspace databases"
 
+  # Managers that call archive expect it to finish, so failures only warn here.
+  # WORKSPACE_DROP_INCOMPLETE tells archive not to report a clean finish.
+  WORKSPACE_DROP_INCOMPLETE=""
+
   step "Dropping dev database"
-  if workspace_databases_suffixed development; then
-    RAILS_ENV=development bin/rails db:drop 2>/dev/null || true
-    ok "Dev database dropped"
+  if ! workspace_databases_suffixed development || ! drop_workspace_database development Dev; then
+    WORKSPACE_DROP_INCOMPLETE=1
   fi
 
   step "Dropping test database"
-  if workspace_databases_suffixed test; then
-    RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
-    ok "Test database dropped"
+  if ! workspace_databases_suffixed test || ! drop_workspace_database test Test; then
+    WORKSPACE_DROP_INCOMPLETE=1
   fi
 }
 
@@ -317,24 +332,10 @@ drop_workspace_databases_strict() {
   header "Dropping workspace databases"
 
   step "Dropping dev database"
-  if ! workspace_databases_suffixed development; then
-    _drop_failed=1
-  elif RAILS_ENV=development bin/rails db:drop 2>/dev/null; then
-    ok "Dev database dropped"
-  else
-    warn "Could not drop dev database"
-    _drop_failed=1
-  fi
+  workspace_databases_suffixed development && drop_workspace_database development Dev || _drop_failed=1
 
   step "Dropping test database"
-  if ! workspace_databases_suffixed test; then
-    _drop_failed=1
-  elif RAILS_ENV=test bin/rails db:drop 2>/dev/null; then
-    ok "Test database dropped"
-  else
-    warn "Could not drop test database"
-    _drop_failed=1
-  fi
+  workspace_databases_suffixed test && drop_workspace_database test Test || _drop_failed=1
 
   [ "$_drop_failed" -eq 0 ]
 }

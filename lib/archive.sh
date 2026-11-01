@@ -133,4 +133,10 @@ else
   unregister_workspace
 fi
 
+if [ -n "${WORKSPACE_DROP_INCOMPLETE:-}" ]; then
+  printf "\n"
+  warn "Archive finished, but some databases were not dropped"
+  exit 0
+fi
+
 printf "\n${_green}  ✓${_reset} ${_bold}Archive complete${_reset}\n"
