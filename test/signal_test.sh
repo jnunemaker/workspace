@@ -36,22 +36,22 @@ export WORKSPACE_TEST_DIR="$TEST_TMP"
 export WORKSPACE_TEST_RAILS_LOG="$TEST_TMP/rails.log"
 lock="$root/.git/workspace/prune.lock"
 
-# Run a lib/ command with `$hook` holding it, signal it, then let the hook end.
+# Run a lib/ command held inside bin/$1 of the current checkout, signal it, then
+# let the hook end.
 signal_during_hook() {
   _signal_hook="$1"
   _signal_command="$2"
   rm -f "$TEST_TMP/hook-started" "$TEST_TMP/hook-release"
   : > "$WORKSPACE_TEST_RAILS_LOG"
-  cp "$worktree/bin/hold-hook" "$worktree/bin/$_signal_hook"
+  cp bin/hold-hook "bin/$_signal_hook"
   sh "$WORKSPACE_HOME/lib/$_signal_command.sh" >/dev/null 2>&1 &
   _signal_pid=$!
   wait_until [ -f "$TEST_TMP/hook-started" ]
   kill -TERM "$_signal_pid"
-  sleep 0.2
   touch "$TEST_TMP/hook-release"
-  _signal_status=0
-  wait "$_signal_pid" || _signal_status=$?
-  rm -f "$worktree/bin/$_signal_hook"
+  wait "$_signal_pid"
+  _signal_status=$?
+  rm -f "bin/$_signal_hook"
 }
 
 cd "$worktree"
@@ -70,21 +70,10 @@ assert_false "signalled archive drops no database" grep -q 'db:drop' "$WORKSPACE
 assert_true "signalled archive keeps its registration" [ -n "$(ls "$root/.git/workspace/registry")" ]
 assert_false "signalled archive releases the lock" [ -L "$lock" ]
 
-# Prune is signalled during the cleanup it runs for a worktree that is gone,
-# and restores the claimed record on its next run.
+# Prune is signalled during the cleanup it runs for a worktree that is gone.
 cd "$root"
-cp "$root/bin/hold-hook" "$root/bin/workspace-archive-hook"
 git -C "$root" worktree remove --force "$worktree"
-rm -f "$TEST_TMP/hook-started" "$TEST_TMP/hook-release"
-: > "$WORKSPACE_TEST_RAILS_LOG"
-sh "$WORKSPACE_HOME/lib/prune.sh" >/dev/null 2>&1 &
-_signal_pid=$!
-wait_until [ -f "$TEST_TMP/hook-started" ]
-kill -TERM "$_signal_pid"
-sleep 0.2
-touch "$TEST_TMP/hook-release"
-_signal_status=0
-wait "$_signal_pid" || _signal_status=$?
+signal_during_hook workspace-archive-hook prune
 assert_equal "signalled prune exits with the signal's status" "143" "$_signal_status"
 assert_false "signalled prune releases the lock" [ -L "$lock" ]
 
