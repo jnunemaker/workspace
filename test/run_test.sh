@@ -400,6 +400,10 @@ assert_false "run fails without Procfile.dev" env PATH="$archive_bin:$PATH" COND
 assert_true "run names the missing Procfile.dev" grep -q 'Procfile.dev not found' "$output"
 assert_equal "run without Procfile.dev stops nothing" "" "$(cat "$WORKSPACE_TEST_LSOF_LOG")"
 
+assert_true "arguments can name another Procfile" env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=missing-procfile \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$TEST_TMP/custom-procfile.log" sh "$WORKSPACE_HOME/lib/run.sh" -f Procfile.custom >/dev/null 2>&1
+assert_true "foreman receives the other Procfile" grep -q 'ARGS=start -f Procfile.dev --env /dev/null -f Procfile.custom' "$TEST_TMP/custom-procfile.log"
+
 paths=$(make_run_app "present-procfile")
 app_dir=${paths%%|*}
 root_dir=${paths#*|}

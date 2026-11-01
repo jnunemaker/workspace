@@ -110,7 +110,8 @@ if [ -z "$FOREMAN_CMD" ]; then
   err "foreman is not installed. Fix: gem install foreman"
   exit 1
 fi
-if [ ! -f Procfile.dev ]; then
+# Arguments reach foreman after our -f, so they may name another Procfile.
+if [ ! -f Procfile.dev ] && [ "$#" -eq 0 ]; then
   err "Procfile.dev not found. workspace run starts the app with foreman from that file."
   exit 1
 fi
