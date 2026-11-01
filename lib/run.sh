@@ -7,10 +7,11 @@
 #   3. Reserve a Git port block and export the DB suffix
 #   4. Source bin/workspace-environment-hook if it exists
 #   5. Detect app services, resolve authoritative ports, and export them
-#   6. Sweep ports (kill stale processes)
-#   7. Source bin/workspace-run-hook if it exists
-#   8. Display the configured application URL or the generic fallback
-#   9. Start server via foreman
+#   6. Check that foreman and Procfile.dev are present
+#   7. Sweep ports (kill stale processes)
+#   8. Source bin/workspace-run-hook if it exists
+#   9. Display the configured application URL or the generic fallback
+#  10. Start server via foreman
 
 set -e
 
@@ -101,6 +102,20 @@ if [ "$USES_VITE" = "true" ]; then
   fi
 fi
 
+# ── Check prerequisites ──────────────────────────────────────────
+
+# The sweep stops whatever is on these ports, so fail before it when the
+# replacement cannot start.
+if [ -z "$FOREMAN_CMD" ]; then
+  err "foreman is not installed. Fix: gem install foreman"
+  exit 1
+fi
+# Arguments reach foreman after our -f, so they may name another Procfile.
+if [ ! -f Procfile.dev ] && [ "$#" -eq 0 ]; then
+  err "Procfile.dev not found. workspace run starts the app with foreman from that file."
+  exit 1
+fi
+
 # ── Sweep ports ──────────────────────────────────────────────────
 
 for offset in $(seq 0 9); do
@@ -115,13 +130,6 @@ done
 
 if [ -x bin/workspace-run-hook ]; then
   . bin/workspace-run-hook
-fi
-
-# ── Check for foreman ────────────────────────────────────────────
-
-if [ -z "$FOREMAN_CMD" ]; then
-  err "foreman is not installed. Fix: gem install foreman"
-  exit 1
 fi
 
 # ── Start server ─────────────────────────────────────────────────
