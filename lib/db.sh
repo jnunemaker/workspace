@@ -272,7 +272,7 @@ drop_workspace_database() {
   step "Dropping $2 database"
   workspace_databases_suffixed "$1" || return 1
   if { _drop_errors=$(RAILS_ENV="$1" bin/rails db:drop 2>&1 >&3 3>&-); } 3>&1; then
-    ok "$2 database dropped"
+    ok "Dropped $2 database"
     return 0
   fi
   warn "Could not drop $2 database"

@@ -526,7 +526,7 @@ chmod +x bin/rails
 drop_output="$TEST_TMP/drop-result.out"
 assert_false "legacy cleanup reports a failed db:drop" \
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
-assert_false "failed drops are not reported as dropped" grep -q 'database dropped' "$drop_output"
+assert_false "failed drops are not reported as dropped" grep -q 'Dropped [a-z]* database' "$drop_output"
 assert_true "a failed dev drop is reported" grep -q 'Could not drop dev database' "$drop_output"
 assert_true "a failed test drop is reported" grep -q 'Could not drop test database' "$drop_output"
 assert_true "the failure shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
@@ -544,7 +544,7 @@ esac
 SCRIPT
 assert_true "legacy cleanup succeeds when db:drop does" \
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
-assert_true "a successful drop is reported" grep -q 'dev database dropped' "$drop_output"
+assert_true "a successful drop is reported" grep -q 'Dropped dev database' "$drop_output"
 assert_true "Rails output still reaches the terminal" grep -q 'Dropped database' "$drop_output"
 assert_false "stderr from a successful drop stays hidden" grep -q 'noise' "$drop_output"
 
