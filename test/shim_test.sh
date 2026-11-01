@@ -109,7 +109,7 @@ case "$*" in
 esac
 SCRIPT
 chmod +x "$sub_root/bin/rails"
-(cd "$sub_root" && sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1)
+(cd "$sub_root" && run_init)
 commit_git_repo "$sub_root"
 sub_worktree="$TEST_TMP/subdir-worktree"
 git -C "$sub_root" worktree add -q "$sub_worktree" -b subdir-worktree
@@ -120,8 +120,9 @@ cd "$sub_worktree/app/models"
 WORKSPACE_TEST_RAILS_LOG="$rails_log" WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" bootstrap >/dev/null 2>&1
 assert_true "bootstrap from a subdirectory marks the project root" [ -f "$sub_worktree/.workspace" ]
 assert_false "bootstrap from a subdirectory leaves no marker there" [ -e .workspace ]
-output=$(WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" info 2>&1)
-assert_true "info from a subdirectory finds the project's marker" sh -c 'printf "%s\n" "$1" | grep -q "^Identity source: .workspace$"' sh "$output"
+output="$TEST_TMP/subdir-info.out"
+WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" info >"$output" 2>&1
+assert_true "info from a subdirectory finds the project's marker" grep -q '^Identity source: .workspace$' "$output"
 
 : > "$rails_log"
 WORKSPACE_TEST_RAILS_LOG="$rails_log" WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" archive >/dev/null 2>&1

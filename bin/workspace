@@ -74,6 +74,7 @@ usage() {
 # files there. Move to the nearest directory in this checkout with the shim
 # from workspace init; a project without one stays where it was run.
 enter_project_root() {
+  [ ! -x bin/workspace ] || return 0
   _project_top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   _project_dir=$(pwd -P)
   while [ ! -x "$_project_dir/bin/workspace" ]; do
