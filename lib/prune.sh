@@ -42,7 +42,7 @@ if [ "$_prune_mode" = "--deferred" ]; then
 fi
 
 acquire_workspace_registry_lock || exit 0
-trap 'release_workspace_registry_lock' EXIT HUP INT TERM
+release_workspace_registry_lock_on_exit
 
 # A killed prune may leave its immutable claim behind. A newer published record
 # wins; otherwise restore the claim so this run can retry its cleanup.

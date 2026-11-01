@@ -77,7 +77,7 @@ if [ "$WORKSPACE_PROVIDER" = "git" ]; then
     err "Workspace lifecycle is busy — run bootstrap again"
     exit 1
   }
-  trap 'release_workspace_registry_lock' EXIT HUP INT TERM
+  release_workspace_registry_lock_on_exit
 fi
 
 header "Setting up workspace"
