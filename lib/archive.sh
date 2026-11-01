@@ -121,6 +121,7 @@ fi
 
 # ── Drop workspace databases ────────────────────────────────────
 
+_drop_incomplete=false
 if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
   drop_workspace_databases_strict
   if [ -n "$_archive_registry_entry" ]; then
@@ -129,14 +130,14 @@ if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
     unregister_workspace
   fi
 else
-  drop_workspace_databases
+  # Managers that call archive expect it to finish, so failures only warn here.
+  drop_workspace_databases || _drop_incomplete=true
   unregister_workspace
 fi
 
-if [ -n "${WORKSPACE_DROP_INCOMPLETE:-}" ]; then
+if [ "$_drop_incomplete" = true ]; then
   printf "\n"
   warn "Archive finished, but some databases were not dropped"
-  exit 0
+else
+  printf "\n${_green}  ✓${_reset} ${_bold}Archive complete${_reset}\n"
 fi
-
-printf "\n${_green}  ✓${_reset} ${_bold}Archive complete${_reset}\n"

@@ -524,11 +524,11 @@ exit 1
 SCRIPT
 chmod +x bin/rails
 drop_output="$TEST_TMP/drop-result.out"
-assert_true "legacy cleanup still finishes when db:drop fails" \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases; [ "$WORKSPACE_DROP_INCOMPLETE" = 1 ]' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
+assert_false "legacy cleanup reports a failed db:drop" \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
 assert_false "failed drops are not reported as dropped" grep -q 'database dropped' "$drop_output"
-assert_true "a failed dev drop is reported" grep -q 'Could not drop Dev database' "$drop_output"
-assert_true "a failed test drop is reported" grep -q 'Could not drop Test database' "$drop_output"
+assert_true "a failed dev drop is reported" grep -q 'Could not drop dev database' "$drop_output"
+assert_true "a failed test drop is reported" grep -q 'Could not drop test database' "$drop_output"
 assert_true "the failure shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
 
 assert_false "strict cleanup fails when db:drop fails" \
@@ -543,8 +543,8 @@ case "$*" in
 esac
 SCRIPT
 assert_true "legacy cleanup succeeds when db:drop does" \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases; [ -z "$WORKSPACE_DROP_INCOMPLETE" ]' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
-assert_true "a successful drop is reported" grep -q 'Dev database dropped' "$drop_output"
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
+assert_true "a successful drop is reported" grep -q 'dev database dropped' "$drop_output"
 assert_true "Rails output still reaches the terminal" grep -q 'Dropped database' "$drop_output"
 assert_false "stderr from a successful drop stays hidden" grep -q 'noise' "$drop_output"
 
@@ -602,7 +602,7 @@ assert_equal "strict cleanup drops nothing when a database is unsuffixed" "" "$(
 assert_true "refusal names the unsuffixed database" grep -q 'without the _suffix-ws suffix: app_test$' "$unsuffixed_drop_output"
 
 : > "$WORKSPACE_TEST_DROP_LOG"
-assert_true "legacy cleanup warns instead of failing" env WORKSPACE_TEST_TEST_DATABASE=app_test \
+assert_false "legacy cleanup reports the refusal" env WORKSPACE_TEST_TEST_DATABASE=app_test \
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 assert_equal "legacy cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
 
