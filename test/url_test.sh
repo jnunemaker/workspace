@@ -65,6 +65,7 @@ git -C "$TEST_TMP/root" -c user.name=Test -c user.email=test@example.com commit 
 git -C "$TEST_TMP/root" worktree add -q --detach "$TEST_TMP/linked" || exit 1
 cp -R "$app/bin" "$TEST_TMP/linked/bin" || exit 1
 cd "$TEST_TMP/linked" || exit 1
+touch Procfile.dev
 printf "WORKSPACE_APP_URL_TEMPLATE='http://custom.test:{port}'\n" > .env
 sh "$WORKSPACE_HOME/lib/info.sh" > "$TEST_TMP/info-before"
 assert_false "info creates no cleanup registration" test -d "$TEST_TMP/root/.git/workspace/registry"
