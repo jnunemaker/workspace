@@ -97,4 +97,50 @@ output="$TEST_TMP/shim-path-wrapper.out"
 assert_true "shim falls back from an unverifiable PATH wrapper to canonical install" env PATH="$TEST_TMP/path-bin:/usr/bin:/bin" WORKSPACE_HOME="$WORKSPACE_HOME" bin/workspace info >"$output" 2>&1
 assert_true "canonical fallback through PATH wrapper reaches workspace info" grep -q '^Provider: default$' "$output"
 
+# Lifecycle commands from a subdirectory act on the project, not that directory.
+sub_root="$TEST_TMP/subdir-root"
+mkdir -p "$sub_root/bin" "$sub_root/config" "$sub_root/app/models"
+touch "$sub_root/app/models/.keep" "$sub_root/config/database.yml"
+cat > "$sub_root/bin/rails" <<'SCRIPT'
+#!/bin/sh
+printf '%s %s\n' "$(pwd -P)" "$*" >> "$WORKSPACE_TEST_RAILS_LOG"
+case "$*" in
+  runner*) echo workspace-suffix-checked ;;
+esac
+SCRIPT
+chmod +x "$sub_root/bin/rails"
+(cd "$sub_root" && sh "$WORKSPACE_HOME/lib/init.sh" >/dev/null 2>&1)
+commit_git_repo "$sub_root"
+sub_worktree="$TEST_TMP/subdir-worktree"
+git -C "$sub_root" worktree add -q "$sub_worktree" -b subdir-worktree
+sub_worktree=$(cd "$sub_worktree" && pwd -P)
+rails_log="$TEST_TMP/subdir-rails.log"
+
+cd "$sub_worktree/app/models"
+WORKSPACE_TEST_RAILS_LOG="$rails_log" WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" bootstrap >/dev/null 2>&1
+assert_true "bootstrap from a subdirectory marks the project root" [ -f "$sub_worktree/.workspace" ]
+assert_false "bootstrap from a subdirectory leaves no marker there" [ -e .workspace ]
+output=$(WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" info 2>&1)
+assert_true "info from a subdirectory finds the project's marker" sh -c 'printf "%s\n" "$1" | grep -q "^Identity source: .workspace$"' sh "$output"
+
+: > "$rails_log"
+WORKSPACE_TEST_RAILS_LOG="$rails_log" WORKSPACE_PORT=51260 "$WORKSPACE_HOME/bin/workspace" archive >/dev/null 2>&1
+assert_true "archive from a subdirectory drops the databases" grep -q "^$sub_worktree db:drop$" "$rails_log"
+assert_equal "archive from a subdirectory forgets the workspace only after dropping" "0" "$(ls "$sub_root/.git/workspace/registry" | wc -l | tr -d ' ')"
+
+# A project without the shim keeps running where it was asked to, so an app in
+# a subdirectory of a repository still finds its own hooks.
+no_shim="$TEST_TMP/no-shim"
+mkdir -p "$no_shim/app/bin"
+cat > "$no_shim/app/bin/workspace-archive-hook" <<'SCRIPT'
+#!/bin/sh
+pwd -P > "$WORKSPACE_TEST_HOOK_CWD"
+SCRIPT
+chmod +x "$no_shim/app/bin/workspace-archive-hook"
+commit_git_repo "$no_shim"
+git -C "$no_shim" worktree add -q "$TEST_TMP/no-shim-worktree" -b no-shim-worktree
+cd "$TEST_TMP/no-shim-worktree/app"
+WORKSPACE_TEST_HOOK_CWD="$TEST_TMP/hook-cwd" WORKSPACE_PORT=51270 "$WORKSPACE_HOME/bin/workspace" archive >/dev/null 2>&1
+assert_equal "a project without the shim is not moved" "$(pwd -P)" "$(cat "$TEST_TMP/hook-cwd")"
+
 report "project workspace shim"

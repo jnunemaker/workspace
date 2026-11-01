@@ -68,6 +68,21 @@ usage() {
   echo "Run 'workspace <command> --help' for more information."
 }
 
+# Lifecycle commands read hooks, markers and config relative to the project
+# root. From a subdirectory they find none of them: archive would forget the
+# workspace without dropping its databases, and bootstrap would link shared
+# files there. Move to the nearest directory in this checkout with the shim
+# from workspace init; a project without one stays where it was run.
+enter_project_root() {
+  _project_top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  _project_dir=$(pwd -P)
+  while [ ! -x "$_project_dir/bin/workspace" ]; do
+    [ "$_project_dir" != "$_project_top" ] && [ "$_project_dir" != "/" ] || return 0
+    _project_dir=$(dirname "$_project_dir")
+  done
+  cd "$_project_dir"
+}
+
 case "${1:-}" in
   init)
     shift
@@ -75,18 +90,22 @@ case "${1:-}" in
     ;;
   bootstrap)
     shift
+    enter_project_root
     exec sh "$WORKSPACE_HOME/lib/bootstrap.sh" "$@"
     ;;
   run)
     shift
+    enter_project_root
     exec sh "$WORKSPACE_HOME/lib/run.sh" "$@"
     ;;
   archive)
     shift
+    enter_project_root
     exec sh "$WORKSPACE_HOME/lib/archive.sh" "$@"
     ;;
   info)
     shift
+    enter_project_root
     exec sh "$WORKSPACE_HOME/lib/info.sh" "$@"
     ;;
   prune)

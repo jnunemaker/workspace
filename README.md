@@ -52,6 +52,9 @@ Claude Code, Codex, T3 Code, Conductor, Superset, and Superconductor use the sam
 using the application's ordinary `bin/setup`, `bin/update`, and `bin/dev`
 commands.
 
+`bootstrap`, `run`, `archive`, and `info` work from any subdirectory of a project
+with `bin/workspace`: they move to that project's root first.
+
 A separate plain `git clone` is another root/default checkout. Sibling
 isolation requires an identity supplied by a supported manager or a linked Git
 worktree created with `git worktree add`.
