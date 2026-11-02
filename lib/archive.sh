@@ -61,7 +61,7 @@ if [ -z "$_archive_registry_entry" ] && [ "$WORKSPACE_PROVIDER" = "git" ]; then
     err "Workspace lifecycle is busy — try archive again"
     exit 1
   }
-  trap 'release_workspace_registry_lock' EXIT HUP INT TERM
+  release_workspace_registry_lock_on_exit
 fi
 
 header "Archiving workspace: $WORKSPACE_NAME"

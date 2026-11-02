@@ -109,6 +109,15 @@ release_workspace_registry_lock() {
   rm -f "$_workspace_lock"
 }
 
+# A signal trap that only released the lock would swallow the signal: the shell
+# carries on with its next command, unlocked. So signals exit, and exit releases.
+release_workspace_registry_lock_on_exit() {
+  trap 'release_workspace_registry_lock' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
 workspace_registry_lock_owned() {
   _workspace_lock=$(workspace_registry_lock) || return 1
   [ "$(readlink "$_workspace_lock" 2>/dev/null || true)" = "$$" ]
