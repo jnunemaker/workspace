@@ -21,11 +21,6 @@ EOF
 fi
 
 _prune_mode="${1:-}"
-case "$_prune_mode" in
-  --after-delay) ;;
-  --deferred|--quiet) shift; refuse_arguments prune "$@" ;;
-  *) refuse_arguments prune "$@" ;;
-esac
 
 if [ "$_prune_mode" = "--after-delay" ]; then
   [ -n "${2:-}" ] || exit 0
@@ -33,6 +28,11 @@ if [ "$_prune_mode" = "--after-delay" ]; then
   sleep 5
   cd "$_prune_root" 2>/dev/null || exit 0
   _prune_mode=""
+else
+  case "$_prune_mode" in
+    --deferred|--quiet) shift ;;
+  esac
+  refuse_arguments prune "$@"
 fi
 
 resolve_workspace

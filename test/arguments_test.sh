@@ -68,7 +68,7 @@ worktree_app args-bootstrap
 app="$TEST_TMP/args-bootstrap"
 for bad_arguments in --dry-run "--once --dry-run"; do
   # shellcheck disable=SC2086
-  output=$(cd "$app/wt" && rm -f .workspace && WORKSPACE_PORT=51280 "$WORKSPACE_HOME/bin/workspace" bootstrap $bad_arguments 2>&1)
+  (cd "$app/wt" && rm -f .workspace && WORKSPACE_PORT=51280 "$WORKSPACE_HOME/bin/workspace" bootstrap $bad_arguments >/dev/null 2>&1)
   assert_equal "bootstrap $bad_arguments fails" "1" "$?"
   assert_false "bootstrap $bad_arguments writes no marker" [ -e "$app/wt/.workspace" ]
 done

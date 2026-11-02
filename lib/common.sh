@@ -18,11 +18,9 @@ divider() { printf "\n${_dim}─────────────────
 # Stop a command that changes things before it acts on an argument it does not
 # know, such as a mistyped flag or a --dry-run it does not have.
 refuse_arguments() {
-  _refusing_command="$1"
-  shift
-  [ "$#" -gt 0 ] || return 0
-  err "workspace $_refusing_command does not take '$1'. Nothing was changed."
-  err "See workspace $_refusing_command --help"
+  [ "$#" -gt 1 ] || return 0
+  err "workspace $1 does not take '$2'. Nothing was changed."
+  err "See workspace $1 --help"
   exit 1
 }
 
