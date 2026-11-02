@@ -266,7 +266,21 @@ workspace_databases_suffixed() {
   fi
 }
 
-# Drop workspace-specific databases.
+# Drop RAILS_ENV=$1's databases if their names are safe, reporting the real
+# result under the label $2, with what Rails said when it failed.
+drop_workspace_database() {
+  step "Dropping $2 database"
+  workspace_databases_suffixed "$1" || return 1
+  if { _drop_errors=$(RAILS_ENV="$1" bin/rails db:drop 2>&1 >&3 3>&-); } 3>&1; then
+    ok "Dropped $2 database"
+    return 0
+  fi
+  warn "Could not drop $2 database"
+  [ -z "$_drop_errors" ] || printf '%s\n' "$_drop_errors" | sed -n '1,5s/^/    /p'
+  return 1
+}
+
+# Drop workspace-specific databases, returning nonzero if any were left.
 drop_workspace_databases() {
   if is_default_workspace; then
     return 0
@@ -282,17 +296,10 @@ drop_workspace_databases() {
 
   header "Dropping workspace databases"
 
-  step "Dropping dev database"
-  if workspace_databases_suffixed development; then
-    RAILS_ENV=development bin/rails db:drop 2>/dev/null || true
-    ok "Dev database dropped"
-  fi
-
-  step "Dropping test database"
-  if workspace_databases_suffixed test; then
-    RAILS_ENV=test bin/rails db:drop 2>/dev/null || true
-    ok "Test database dropped"
-  fi
+  _drop_failed=0
+  drop_workspace_database development dev || _drop_failed=1
+  drop_workspace_database test test || _drop_failed=1
+  [ "$_drop_failed" -eq 0 ]
 }
 
 # Drop databases for unattended reconciliation. Unlike the legacy archive path,
@@ -316,25 +323,8 @@ drop_workspace_databases_strict() {
 
   header "Dropping workspace databases"
 
-  step "Dropping dev database"
-  if ! workspace_databases_suffixed development; then
-    _drop_failed=1
-  elif RAILS_ENV=development bin/rails db:drop 2>/dev/null; then
-    ok "Dev database dropped"
-  else
-    warn "Could not drop dev database"
-    _drop_failed=1
-  fi
-
-  step "Dropping test database"
-  if ! workspace_databases_suffixed test; then
-    _drop_failed=1
-  elif RAILS_ENV=test bin/rails db:drop 2>/dev/null; then
-    ok "Test database dropped"
-  else
-    warn "Could not drop test database"
-    _drop_failed=1
-  fi
+  drop_workspace_database development dev || _drop_failed=1
+  drop_workspace_database test test || _drop_failed=1
 
   [ "$_drop_failed" -eq 0 ]
 }
