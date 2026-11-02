@@ -632,4 +632,41 @@ assert_true "Rails before 6.1 keeps the previous cleanup" env WORKSPACE_TEST_RAI
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 unset WORKSPACE_TEST_DROP_LOG
 
+# ── say why database names could not be checked ─────────────────
+
+check_names() {
+  (WORKSPACE_DB_SUFFIX=_check-ws; workspace_databases_suffixed development) > "$check_output" 2>&1
+}
+
+app_dir=$(create_fake_app "check-failure")
+cd "$app_dir"
+check_output="$TEST_TMP/check-failure.out"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+for line in 1 2 3 4 5 6 7; do
+  echo "boot failure line $line" >&2
+done
+exit 1
+SCRIPT
+chmod +x bin/rails
+assert_false "a failed name check stops the drop" check_names
+assert_true "a failed name check says so" grep -q 'Could not check development database names' "$check_output"
+assert_true "a failed name check shows what Rails said" grep -q 'boot failure line 1$' "$check_output"
+assert_false "a failed name check shows only the start" grep -q 'boot failure line 6' "$check_output"
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+echo workspace-suffix-checked
+exit 1
+SCRIPT
+assert_false "a runner that fails after the marker is not a passed check" check_names
+
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+echo "a deprecation warning" >&2
+echo workspace-suffix-checked
+SCRIPT
+assert_true "warnings do not fail the name check" check_names
+assert_false "warnings from a passed check stay hidden" grep -q 'deprecation' "$check_output"
+
 report "db.sh"
