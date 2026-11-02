@@ -123,7 +123,7 @@ fi
 
 _drop_incomplete=false
 if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
-  drop_workspace_databases_strict
+  drop_workspace_databases
   if [ -n "$_archive_registry_entry" ]; then
     unregister_workspace "$_archive_registry_entry"
   else

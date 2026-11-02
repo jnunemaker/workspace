@@ -485,17 +485,27 @@ chmod +x bin/rails
 WORKSPACE_NAME="default"
 assert_false "literal default cannot be an isolated database suffix" create_workspace_databases
 assert_false "default protection runs before Rails" [ -f .rails-called ]
-assert_false "literal default cannot use legacy database cleanup" drop_workspace_databases
-assert_false "literal default cannot use strict database cleanup" drop_workspace_databases_strict
+assert_false "literal default cannot use database cleanup" drop_workspace_databases
 assert_false "cleanup default protection runs before Rails" [ -f .rails-called ]
 
-# ── drop_workspace_databases_strict ─────────────────────────────
+# ── drop_workspace_databases ────────────────────────────────────
 
 non_rails_dir="$TEST_TMP/non-rails"
 mkdir -p "$non_rails_dir"
 cd "$non_rails_dir"
 WORKSPACE_NAME="non-rails-ws"
-assert_true "strict cleanup is a no-op for non-Rails projects" drop_workspace_databases_strict
+assert_true "cleanup is a no-op for non-Rails projects" drop_workspace_databases
+
+app_dir=$(create_fake_app "no-database-config")
+cd "$app_dir"
+cat > bin/rails <<'SCRIPT'
+#!/bin/sh
+touch .rails-called
+SCRIPT
+chmod +x bin/rails
+WORKSPACE_NAME="no-config-ws"
+assert_true "cleanup is a no-op for Rails apps with no database.yml" drop_workspace_databases
+assert_false "cleanup with no database.yml does not run Rails" [ -f .rails-called ]
 
 app_dir=$(create_fake_app "strict-drop-failure")
 cd "$app_dir"
@@ -506,7 +516,7 @@ exit 1
 SCRIPT
 chmod +x bin/rails
 WORKSPACE_NAME="strict-failure-ws"
-assert_false "strict cleanup reports Rails drop failures" drop_workspace_databases_strict
+assert_false "cleanup reports Rails drop failures" drop_workspace_databases
 
 # ── report the real db:drop result ──────────────────────────────
 
@@ -524,16 +534,12 @@ exit 1
 SCRIPT
 chmod +x bin/rails
 drop_output="$TEST_TMP/drop-result.out"
-assert_false "legacy cleanup reports a failed db:drop" \
+assert_false "cleanup reports a failed db:drop" \
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
 assert_false "failed drops are not reported as dropped" grep -q 'Dropped [a-z]* database' "$drop_output"
 assert_true "a failed dev drop is reported" grep -q 'Could not drop dev database' "$drop_output"
 assert_true "a failed test drop is reported" grep -q 'Could not drop test database' "$drop_output"
 assert_true "the failure shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
-
-assert_false "strict cleanup fails when db:drop fails" \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
-assert_true "strict cleanup shows what Rails said" grep -q 'being accessed by other users' "$drop_output"
 
 cat > bin/rails <<'SCRIPT'
 #!/bin/sh
@@ -542,7 +548,7 @@ case "$*" in
   *) echo "Dropped database"; echo "noise" >&2 ;;
 esac
 SCRIPT
-assert_true "legacy cleanup succeeds when db:drop does" \
+assert_true "cleanup succeeds when db:drop does" \
   sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=drop-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$drop_output" 2>&1
 assert_true "a successful drop is reported" grep -q 'Dropped dev database' "$drop_output"
 assert_true "Rails output still reaches the terminal" grep -q 'Dropped database' "$drop_output"
@@ -596,40 +602,35 @@ export WORKSPACE_TEST_DROP_LOG
 
 unsuffixed_drop_output="$TEST_TMP/unsuffixed-drop.out"
 : > "$WORKSPACE_TEST_DROP_LOG"
-assert_false "strict cleanup refuses unsuffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" > "$unsuffixed_drop_output" 2>&1
-assert_equal "strict cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
+assert_false "cleanup refuses unsuffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" > "$unsuffixed_drop_output" 2>&1
+assert_equal "cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
 assert_true "refusal names the unsuffixed database" grep -q 'without the _suffix-ws suffix: app_test$' "$unsuffixed_drop_output"
-
-: > "$WORKSPACE_TEST_DROP_LOG"
-assert_false "legacy cleanup reports the refusal" env WORKSPACE_TEST_TEST_DATABASE=app_test \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
-assert_equal "legacy cleanup drops nothing when a database is unsuffixed" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
 
 # Another workspace whose name starts with this one is not a match.
 : > "$WORKSPACE_TEST_DROP_LOG"
 assert_false "a longer workspace name is not this suffix" env WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-wsx \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 
 : > "$WORKSPACE_TEST_DROP_LOG"
-assert_true "strict cleanup drops suffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_true "cleanup drops suffixed databases" env WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 assert_equal "suffixed databases are dropped in both environments" "development
 test" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
 
 : > "$WORKSPACE_TEST_DROP_LOG"
 assert_true "an in-memory test database needs no suffix" env WORKSPACE_TEST_TEST_DATABASE=:memory: \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 
 : > "$WORKSPACE_TEST_DROP_LOG"
-assert_false "strict cleanup fails when names cannot be checked" env WORKSPACE_TEST_RUNNER_FAILS=1 WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+assert_false "cleanup fails when names cannot be checked" env WORKSPACE_TEST_RUNNER_FAILS=1 WORKSPACE_TEST_TEST_DATABASE=app_test_suffix-ws \
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 assert_equal "nothing is dropped when names cannot be checked" "" "$(cat "$WORKSPACE_TEST_DROP_LOG")"
 
 # Rails before 6.1 lacks the configuration API, so names are not checked.
 : > "$WORKSPACE_TEST_DROP_LOG"
 assert_true "Rails before 6.1 keeps the previous cleanup" env WORKSPACE_TEST_RAILS_VERSION=6.0.6 WORKSPACE_TEST_TEST_DATABASE=app_test \
-  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases_strict' sh "$WORKSPACE_HOME" >/dev/null 2>&1
+  sh -c '. "$1/lib/common.sh"; . "$1/lib/db.sh"; WORKSPACE_NAME=suffix-ws; drop_workspace_databases' sh "$WORKSPACE_HOME" >/dev/null 2>&1
 unset WORKSPACE_TEST_DROP_LOG
 
 report "db.sh"

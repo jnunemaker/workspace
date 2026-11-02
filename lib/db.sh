@@ -290,29 +290,6 @@ drop_workspace_databases() {
     return 1
   fi
 
-  [ -x bin/rails ] || return 0
-
-  export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
-
-  header "Dropping workspace databases"
-
-  _drop_failed=0
-  drop_workspace_database development dev || _drop_failed=1
-  drop_workspace_database test test || _drop_failed=1
-  [ "$_drop_failed" -eq 0 ]
-}
-
-# Drop databases for unattended reconciliation. Unlike the legacy archive path,
-# failures are returned so the registry record can be retained for a retry.
-drop_workspace_databases_strict() {
-  if is_default_workspace; then
-    return 0
-  fi
-  if [ "$WORKSPACE_NAME" = "default" ]; then
-    err "Refusing to drop databases with the reserved workspace name 'default'"
-    return 1
-  fi
-
   if [ ! -x bin/rails ] || [ ! -f config/database.yml ]; then
     step "No Rails database configuration — skipping database cleanup"
     return 0
