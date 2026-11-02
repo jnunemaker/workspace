@@ -242,8 +242,7 @@ create_workspace_databases() {
 # Uses the same configurations db:drop does; Rails before 6.1 lacks that API
 # and is not checked. Returns nonzero, with a warning, when it is not safe.
 workspace_databases_suffixed() {
-  _suffix_status=0
-  _suffix_check=$(RAILS_ENV="$1" VERBOSE=false bin/rails runner '
+  if ! _suffix_check=$(RAILS_ENV="$1" VERBOSE=false bin/rails runner '
     if ActiveRecord.version >= Gem::Version.new("6.1")
       suffix = ENV.fetch("WORKSPACE_DB_SUFFIX")
       %w[development test].each do |env|
@@ -254,9 +253,7 @@ workspace_databases_suffixed() {
       end
     end
     puts "workspace-suffix-checked"
-  ' 2>&1) || _suffix_status=$?
-
-  if [ "$_suffix_status" -ne 0 ] || ! printf '%s\n' "$_suffix_check" | grep -qx 'workspace-suffix-checked'; then
+  ' 2>&1) || ! printf '%s\n' "$_suffix_check" | grep -qx 'workspace-suffix-checked'; then
     warn "Could not check $1 database names — not dropping them"
     show_rails_errors "$_suffix_check"
     return 1
