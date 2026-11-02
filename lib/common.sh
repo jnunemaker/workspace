@@ -15,6 +15,17 @@ warn()    { printf "${_yellow}  !${_reset} %s\n" "$1"; }
 err()     { printf "  error: %s\n" "$1" >&2; }
 divider() { printf "\n${_dim}────────────────────────────────────────${_reset}\n\n"; }
 
+# Stop a command that changes things before it acts on an argument it does not
+# know, such as a mistyped flag or a --dry-run it does not have.
+refuse_arguments() {
+  _refusing_command="$1"
+  shift
+  [ "$#" -gt 0 ] || return 0
+  err "workspace $_refusing_command does not take '$1'. Nothing was changed."
+  err "See workspace $_refusing_command --help"
+  exit 1
+}
+
 # ── Workspace name resolution ──────────────────────────────────────
 
 resolve_workspace() {

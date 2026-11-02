@@ -21,6 +21,11 @@ EOF
 fi
 
 _prune_mode="${1:-}"
+case "$_prune_mode" in
+  --after-delay) ;;
+  --deferred|--quiet) shift; refuse_arguments prune "$@" ;;
+  *) refuse_arguments prune "$@" ;;
+esac
 
 if [ "$_prune_mode" = "--after-delay" ]; then
   [ -n "${2:-}" ] || exit 0

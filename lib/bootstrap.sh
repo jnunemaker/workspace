@@ -47,7 +47,11 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 }
 
 _bootstrap_once=false
-[ "${1:-}" != "--once" ] || _bootstrap_once=true
+if [ "${1:-}" = "--once" ]; then
+  _bootstrap_once=true
+  shift
+fi
+refuse_arguments bootstrap "$@"
 
 resolve_workspace
 
