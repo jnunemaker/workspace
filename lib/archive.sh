@@ -122,18 +122,14 @@ fi
 # ── Drop workspace databases ────────────────────────────────────
 
 _drop_incomplete=false
-if [ -n "$_archive_registry_entry" ] || [ "$WORKSPACE_PROVIDER" = "git" ]; then
+if [ "$WORKSPACE_PROVIDER" = "git" ]; then
+  # A failure stops here so the registration stays for a retry.
   drop_workspace_databases
-  if [ -n "$_archive_registry_entry" ]; then
-    unregister_workspace "$_archive_registry_entry"
-  else
-    unregister_workspace
-  fi
 else
   # Managers that call archive expect it to finish, so failures only warn here.
   drop_workspace_databases || _drop_incomplete=true
-  unregister_workspace
 fi
+unregister_workspace "$_archive_registry_entry"
 
 if [ "$_drop_incomplete" = true ]; then
   printf "\n"

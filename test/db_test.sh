@@ -507,17 +507,6 @@ WORKSPACE_NAME="no-config-ws"
 assert_true "cleanup is a no-op for Rails apps with no database.yml" drop_workspace_databases
 assert_false "cleanup with no database.yml does not run Rails" [ -f .rails-called ]
 
-app_dir=$(create_fake_app "strict-drop-failure")
-cd "$app_dir"
-printf 'development:\n  database: app_development\n' > config/database.yml
-cat > bin/rails <<'SCRIPT'
-#!/bin/sh
-exit 1
-SCRIPT
-chmod +x bin/rails
-WORKSPACE_NAME="strict-failure-ws"
-assert_false "cleanup reports Rails drop failures" drop_workspace_databases
-
 # ── report the real db:drop result ──────────────────────────────
 
 # Checks pass, then db:drop fails the way an in-use Postgres database does.
