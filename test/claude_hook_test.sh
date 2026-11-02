@@ -63,8 +63,14 @@ wait_for_archive() {
   wait_until [ ! -e "$worktree_git_dir/workspace-claude-archiving" ]
 }
 
+# The hook claims the marker with its own PID, then hands it to the bootstrap.
+# Wait for the handoff, which is the last write the hook makes while setup runs.
+setup_marker_names_bootstrap() {
+  ps -ww -p "$(cat "$worktree_git_dir/workspace-claude-bootstrapping" 2>/dev/null)" -o command= 2>/dev/null | grep -q bootstrap.sh
+}
+
 wait_for_setup_marker() {
-  wait_until [ -s "$worktree_git_dir/workspace-claude-bootstrapping" ]
+  wait_until setup_marker_names_bootstrap
 }
 
 last_two_log() {
