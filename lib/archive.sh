@@ -37,6 +37,7 @@ if [ "${1:-}" = "--registry-entry" ]; then
   }
   cd "$WORKSPACE_ROOT_PATH"
 else
+  refuse_arguments archive "$@"
   resolve_workspace
   sanitize_workspace_name
   resolve_workspace_identity
