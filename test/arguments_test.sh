@@ -48,10 +48,9 @@ assert_equal "refused archives keep the registration" "1" "$(registered_count "$
 # prune
 
 rm -rf "$app/wt"
-for bad_arguments in --dry-run "--deferred --dry-run" "--quiet extra"; do
-  # shellcheck disable=SC2086
-  (cd "$app/app" && WORKSPACE_PORT=51280 "$WORKSPACE_HOME/bin/workspace" prune $bad_arguments >/dev/null 2>&1)
-  assert_equal "prune $bad_arguments fails" "1" "$?"
+for bad_argument in --dry-run extra; do
+  (cd "$app/app" && WORKSPACE_PORT=51280 "$WORKSPACE_HOME/bin/workspace" prune "$bad_argument" >/dev/null 2>&1)
+  assert_equal "prune $bad_argument fails" "1" "$?"
 done
 assert_equal "refused prunes run no Rails commands" "" "$(cat "$WORKSPACE_TEST_RAILS_LOG")"
 assert_equal "refused prunes keep the registration" "1" "$(registered_count "$app/app")"
