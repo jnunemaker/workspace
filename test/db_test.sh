@@ -496,16 +496,24 @@ cd "$non_rails_dir"
 WORKSPACE_NAME="non-rails-ws"
 assert_true "cleanup is a no-op for non-Rails projects" drop_workspace_databases
 
-app_dir=$(create_fake_app "no-database-config")
-cd "$app_dir"
-cat > bin/rails <<'SCRIPT'
+# With no database.yml, a Git worktree's archive skips Rails. A manager's archive
+# still tries, because Rails may be configured another way, such as DATABASE_URL.
+no_config_root="$TEST_TMP/no-database-config"
+mkdir -p "$no_config_root/app/bin" "$no_config_root/app/config"
+cat > "$no_config_root/app/bin/rails" <<'SCRIPT'
 #!/bin/sh
 touch .rails-called
+exit 1
 SCRIPT
-chmod +x bin/rails
-WORKSPACE_NAME="no-config-ws"
-assert_true "cleanup is a no-op for Rails apps with no database.yml" drop_workspace_databases
-assert_false "cleanup with no database.yml does not run Rails" [ -f .rails-called ]
+chmod +x "$no_config_root/app/bin/rails"
+commit_git_repo "$no_config_root/app"
+git -C "$no_config_root/app" worktree add -q "$no_config_root/wt" -b wt
+(cd "$no_config_root/wt" && WORKSPACE_PORT=51290 sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1)
+assert_equal "Git archive with no database.yml succeeds" "0" "$?"
+assert_false "Git archive with no database.yml does not run Rails" [ -f "$no_config_root/wt/.rails-called" ]
+(cd "$no_config_root/wt" && WORKSPACE_PORT=51290 CONDUCTOR_WORKSPACE_NAME=no-config CONDUCTOR_ROOT_PATH="$no_config_root/app" sh "$WORKSPACE_HOME/lib/archive.sh" >/dev/null 2>&1)
+assert_equal "manager archive with no database.yml still finishes" "0" "$?"
+assert_true "manager archive with no database.yml still tries Rails" [ -f "$no_config_root/wt/.rails-called" ]
 
 # ── report the real db:drop result ──────────────────────────────
 

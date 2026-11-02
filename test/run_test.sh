@@ -185,7 +185,6 @@ done
 : > "$archive_hook_log"
 : > "$archive_lsof_log"
 : > "$archive_rails_log"
-touch config/database.yml
 printf '%s' "stable-archive-name" > .conductor-workspace
 printf '%s' "stale-workspace-name" > .workspace
 PATH="$archive_bin:$PATH" CONDUCTOR_ROOT_PATH="$root_dir" \

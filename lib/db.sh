@@ -290,10 +290,7 @@ drop_workspace_databases() {
     return 1
   fi
 
-  if [ ! -x bin/rails ] || [ ! -f config/database.yml ]; then
-    step "No Rails database configuration — skipping database cleanup"
-    return 0
-  fi
+  [ -x bin/rails ] || return 0
 
   export WORKSPACE_DB_SUFFIX="_${WORKSPACE_NAME}"
   _drop_failed=0
