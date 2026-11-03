@@ -139,11 +139,10 @@ cd ../myapp
 git worktree remove ../myapp-feature-x
 ```
 
-Remove the worktree with `git worktree remove`, not `rm -rf`. After `rm -rf`,
-Git still lists the worktree and refuses to delete its branch until
-`git worktree prune` runs. `git worktree remove` refuses when the worktree has
-uncommitted or untracked files; commit or discard them first, or add `--force`
-to delete them.
+Use `git worktree remove`, not `rm -rf`: after `rm -rf`, Git still lists the
+worktree and won't delete its branch until `git worktree prune`. If it refuses
+because of uncommitted or untracked files, commit or discard them, or add
+`--force`.
 
 ## Gotchas
 
