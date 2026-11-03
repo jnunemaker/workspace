@@ -21,6 +21,10 @@ ENV
 help_output="$TEST_TMP/run-help.out"
 assert_true "run help succeeds without sourcing a failing dotenv" sh "$WORKSPACE_HOME/lib/run.sh" --help >"$help_output" 2>&1
 assert_true "run help prints usage" grep -q '^Usage: workspace run$' "$help_output"
+# A bare "help" would reach foreman as a process name only after the port
+# sweep had stopped the running server.
+assert_true "run help as a word succeeds" sh "$WORKSPACE_HOME/lib/run.sh" help >"$help_output" 2>&1
+assert_true "run help as a word prints usage" grep -q '^Usage: workspace run$' "$help_output"
 
 make_run_app() {
   app_dir=$(create_fake_app "$1")

@@ -22,14 +22,20 @@ WORKSPACE_LIB="$(dirname "$0")/../lib"
 
 # Help is a read-only command. Return before project detection or dotenv
 # sourcing so a broken checkout cannot prevent the usage text from rendering.
-[ "${1:-}" = "--help" -o "${1:-}" = "-h" ] && {
-  echo "Usage: workspace run"
-  echo ""
-  echo "Starts the dev server for a workspace."
-  echo "Ports use WORKSPACE_PORT or provider-assigned ports, then fall back to"
-  echo "the detected workspace name."
-  exit 0
-}
+# A bare "help" counts too: foreman would take it as a process name, after the
+# port sweep had already stopped the running server.
+case "${1:-}" in
+  --help|-h|help)
+    echo "Usage: workspace run"
+    echo ""
+    echo "Starts the dev server for a workspace."
+    echo "Ports use WORKSPACE_PORT or provider-assigned ports, then fall back to"
+    echo "the detected workspace name."
+    echo "Other arguments go to foreman start, such as a process name:"
+    echo "  workspace run web"
+    exit 0
+    ;;
+esac
 
 resolve_workspace
 sanitize_workspace_name
