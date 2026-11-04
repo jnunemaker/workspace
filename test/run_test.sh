@@ -19,8 +19,10 @@ cat > .env <<'ENV'
 false
 ENV
 help_output="$TEST_TMP/run-help.out"
-assert_true "run help succeeds without sourcing a failing dotenv" sh "$WORKSPACE_HOME/lib/run.sh" --help >"$help_output" 2>&1
-assert_true "run help prints usage" grep -q '^Usage: workspace run$' "$help_output"
+for help_arg in --help -h help; do
+  assert_true "run $help_arg succeeds without sourcing a failing dotenv" sh "$WORKSPACE_HOME/lib/run.sh" "$help_arg" >"$help_output" 2>&1
+  assert_true "run $help_arg prints usage" grep -q '^Usage: workspace run$' "$help_output"
+done
 
 make_run_app() {
   app_dir=$(create_fake_app "$1")
