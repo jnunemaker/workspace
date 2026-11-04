@@ -410,5 +410,5 @@ when supplied; otherwise named worktrees receive a deterministic 10-port block.
 ## Tests
 
 ```sh
-test/run_tests.sh
+sh test/run_tests.sh
 ```

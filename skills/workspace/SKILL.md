@@ -135,8 +135,14 @@ bin/workspace run                  # start the dev server
 ```sh
 cd ~/projects/myapp-feature-x
 bin/workspace archive              # drops the suffixed DBs, kills ports
-cd .. && rm -rf myapp-feature-x
+cd ../myapp
+git worktree remove ../myapp-feature-x
 ```
+
+Use `git worktree remove`, not `rm -rf`: after `rm -rf`, Git still lists the
+worktree and won't delete its branch until `git worktree prune`. If it refuses
+because of uncommitted or untracked files, commit or discard them, or add
+`--force`.
 
 ## Gotchas
 
