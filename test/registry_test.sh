@@ -550,40 +550,60 @@ assert_true "archive hook runs from surviving root" grep -q "^${git_root}:_${reg
 
 # `git worktree move` keeps a worktree's identity, and so its databases, but
 # leaves its registered path behind. Prune must keep it whether the identity is
-# Git's worktree ID (sanitized here: the ID has a dot) or a moved marker.
+# Git's worktree ID (sanitized here: the ID has a dot), a moved marker, or an
+# identity hook's answer that `run` registered before any bootstrap pinned it.
 moved_worktree="$TEST_TMP/moved.worktree"
 marked_worktree="$TEST_TMP/marked-worktree"
-git -C "$git_root" worktree add -q --detach "$moved_worktree"
-git -C "$git_root" worktree add -q --detach "$marked_worktree"
+hooked_worktree="$TEST_TMP/hooked-worktree"
+for new_worktree in "$moved_worktree" "$marked_worktree" "$hooked_worktree"; do
+  git -C "$git_root" worktree add -q --detach "$new_worktree"
+done
 moved_worktree=$(cd "$moved_worktree" && pwd -P)
 marked_worktree=$(cd "$marked_worktree" && pwd -P)
+hooked_worktree=$(cd "$hooked_worktree" && pwd -P)
 printf 'marked-identity\n' > "$marked_worktree/.workspace"
-identity_hook_log="$TEST_TMP/moved-identity-hook.log"
-mkdir -p "$moved_worktree/bin"
-printf '#!/bin/sh\necho ran >> "%s"\n' "$identity_hook_log" > "$moved_worktree/bin/workspace-identity-hook"
-chmod +x "$moved_worktree/bin/workspace-identity-hook"
-(cd "$moved_worktree" && resolve_workspace && sanitize_workspace_name && register_workspace "51600")
-(cd "$marked_worktree" && resolve_workspace && sanitize_workspace_name && resolve_workspace_identity && register_workspace "51610") 2>/dev/null
+mkdir -p "$hooked_worktree/bin"
+cat > "$hooked_worktree/bin/workspace-identity-hook" <<'EOF'
+#!/bin/sh
+[ -z "${WORKSPACE_TEST_IDENTITY_HOOK_FAIL:-}" ] || exit 1
+echo hooked-identity
+EOF
+chmod +x "$hooked_worktree/bin/workspace-identity-hook"
+new_port=51600
+for new_worktree in "$moved_worktree" "$marked_worktree" "$hooked_worktree"; do
+  (cd "$new_worktree" && resolve_workspace && sanitize_workspace_name && resolve_workspace_identity && register_workspace "$new_port") 2>/dev/null
+  new_port=$((new_port + 10))
+done
 moved_entry="$git_root/.git/workspace/registry/moved-worktree.record"
 marked_entry="$git_root/.git/workspace/registry/marked-identity.record"
+hooked_entry="$git_root/.git/workspace/registry/hooked-identity.record"
 assert_true "moved worktree registered before the move" [ -f "$moved_entry" ]
 assert_true "marked worktree registered before the move" [ -f "$marked_entry" ]
-git -C "$git_root" worktree move "$moved_worktree" "$moved_worktree-renamed"
-git -C "$git_root" worktree move "$marked_worktree" "$marked_worktree-renamed"
+assert_true "hooked worktree registered before the move" [ -f "$hooked_entry" ]
+for new_worktree in "$moved_worktree" "$marked_worktree" "$hooked_worktree"; do
+  git -C "$git_root" worktree move "$new_worktree" "$new_worktree-renamed"
+done
 : > "$prune_log"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
 assert_true "prune keeps a worktree moved under its Git identity" [ -f "$moved_entry" ]
 assert_true "prune keeps a worktree moved with its identity marker" [ -f "$marked_entry" ]
+assert_true "prune keeps a worktree moved under its identity hook's name" [ -f "$hooked_entry" ]
 assert_equal "prune drops no databases of moved worktrees" "" "$(cat "$prune_log")"
-assert_false "prune never runs a live worktree's identity hook" [ -e "$identity_hook_log" ]
 
+# Once a moved worktree is removed, prune cleans it up as before, unless some
+# live worktree's identity can't be read: then it keeps every record.
 git -C "$git_root" worktree remove -f "$moved_worktree-renamed"
+PATH="$fake_bin:$PATH" WORKSPACE_TEST_IDENTITY_HOOK_FAIL=1 WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
+assert_true "prune keeps a removed worktree's record while a live identity is unreadable" [ -f "$moved_entry" ]
+assert_equal "prune drops nothing while a live identity is unreadable" "" "$(cat "$prune_log")"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh" --quiet
 assert_false "prune removes a moved worktree's record once it is removed" [ -f "$moved_entry" ]
 assert_true "prune drops a removed moved worktree's databases" grep -q '^development:_moved-worktree:db:drop$' "$prune_log"
 assert_true "prune still keeps the live marked worktree" [ -f "$marked_entry" ]
+assert_true "prune still keeps the live hooked worktree" [ -f "$hooked_entry" ]
 git -C "$git_root" worktree remove -f "$marked_worktree-renamed"
-rm -f "$marked_entry"
+git -C "$git_root" worktree remove -f "$hooked_worktree-renamed"
+rm -f "$marked_entry" "$hooked_entry"
 
 # Registration is intentionally limited to generic Git worktrees; existing
 # providers continue to own their lifecycle state.

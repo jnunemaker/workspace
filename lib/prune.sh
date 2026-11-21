@@ -81,21 +81,38 @@ restore_claimed_record() {
   fi
 }
 
-# A moved worktree keeps its identity, and so its databases, but not its
-# registered path. Lists the identity of every live linked worktree the way
-# lifecycle commands resolve it, except that prune never runs a project's
-# identity hook (a successful bootstrap pins its answer in .workspace).
-list_live_identities() {
-  printf '%s\n' "$_live_worktrees" | sed -n 's/^worktree //p' | while IFS= read -r _live_path; do
-    (
-      cd "$_live_path" && resolve_workspace && [ "$WORKSPACE_PROVIDER" = "git" ] &&
-        sanitize_workspace_name && _workspace_skip_identity_hook=1 &&
-        resolve_workspace_identity && printf '%s\n' "$WORKSPACE_NAME"
-    ) 2>/dev/null || true
-  done
+# Prints the identity of the linked worktree in the current directory, resolved
+# as its own lifecycle commands resolve it; nothing for the main checkout.
+live_worktree_identity() {
+  resolve_workspace
+  [ "$WORKSPACE_PROVIDER" = "git" ] || return 0
+  sanitize_workspace_name
+  resolve_workspace_identity || return 1
+  printf '%s\n' "$WORKSPACE_NAME"
 }
 
-unset _live_identities
+# A moved worktree keeps its identity, and so its databases, but not its
+# registered path. Collects the identities of every live worktree. A worktree
+# that exists but whose identity cannot be resolved makes the answer unknown;
+# a listed path that no longer exists was deleted and has no identity.
+load_live_identities() {
+  _live_identities=""
+  _live_identities_unknown=""
+  while IFS= read -r _live_path; do
+    [ -d "$_live_path" ] || continue
+    if _live_name=$(cd "$_live_path" && live_worktree_identity 2>/dev/null); then
+      _live_identities="$_live_identities$_live_name
+"
+    else
+      _live_identities_unknown=1
+    fi
+  done <<EOF
+$(printf '%s\n' "$_live_worktrees" | sed -n 's/^worktree //p')
+EOF
+  _live_identities_loaded=1
+}
+
+_live_identities_loaded=""
 for _registry_entry in "$_registry_root"/*.record; do
   [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || continue
   _claimed_entry="$_registry_entry.pruning.$$"
@@ -123,9 +140,14 @@ for _registry_entry in "$_registry_root"/*.record; do
     fi
   fi
 
-  [ -n "${_live_identities+set}" ] || _live_identities=$(list_live_identities)
-  if printf '%s\n' "$_live_identities" | grep -Fqx -- "$WORKSPACE_NAME"; then
+  [ -n "$_live_identities_loaded" ] || load_live_identities
+  if printf '%s' "$_live_identities" | grep -Fqx -- "$WORKSPACE_NAME"; then
     restore_claimed_record
+    continue
+  fi
+  if [ -n "$_live_identities_unknown" ]; then
+    restore_claimed_record
+    [ "$_prune_mode" = "--quiet" ] || warn "Could not read every live worktree's identity — skipping $WORKSPACE_NAME"
     continue
   fi
 
