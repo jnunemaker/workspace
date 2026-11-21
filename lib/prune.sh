@@ -83,9 +83,14 @@ restore_claimed_record() {
 
 # Prints the identity of the linked worktree in the current directory, resolved
 # as its own lifecycle commands resolve it; nothing for the main checkout.
+# Prune never runs another checkout's code, so a worktree whose identity hook
+# would decide (no marker yet) has an unknown identity.
 live_worktree_identity() {
   resolve_workspace
   [ "$WORKSPACE_PROVIDER" = "git" ] || return 0
+  if [ ! -s .conductor-workspace ] && [ ! -e .workspace ] && [ -x bin/workspace-identity-hook ]; then
+    return 1
+  fi
   sanitize_workspace_name
   resolve_workspace_identity || return 1
   printf '%s\n' "$WORKSPACE_NAME"
