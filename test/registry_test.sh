@@ -559,7 +559,7 @@ moved_worktree=$(cd "$moved_worktree" && pwd -P)
 marked_worktree=$(cd "$marked_worktree" && pwd -P)
 printf 'marked-identity\n' > "$marked_worktree/.workspace"
 (cd "$moved_worktree" && resolve_workspace && sanitize_workspace_name && register_workspace "51600")
-(cd "$marked_worktree" && resolve_workspace && sanitize_workspace_name && resolve_workspace_identity && register_workspace "51610")
+(cd "$marked_worktree" && resolve_workspace && sanitize_workspace_name && resolve_workspace_identity && register_workspace "51610") 2>/dev/null
 moved_entry="$git_root/.git/workspace/registry/moved-worktree.record"
 marked_entry="$git_root/.git/workspace/registry/marked-identity.record"
 assert_true "moved worktree registered before the move" [ -f "$moved_entry" ]
