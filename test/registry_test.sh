@@ -558,6 +558,10 @@ git -C "$git_root" worktree add -q --detach "$marked_worktree"
 moved_worktree=$(cd "$moved_worktree" && pwd -P)
 marked_worktree=$(cd "$marked_worktree" && pwd -P)
 printf 'marked-identity\n' > "$marked_worktree/.workspace"
+identity_hook_log="$TEST_TMP/moved-identity-hook.log"
+mkdir -p "$moved_worktree/bin"
+printf '#!/bin/sh\necho ran >> "%s"\n' "$identity_hook_log" > "$moved_worktree/bin/workspace-identity-hook"
+chmod +x "$moved_worktree/bin/workspace-identity-hook"
 (cd "$moved_worktree" && resolve_workspace && sanitize_workspace_name && register_workspace "51600")
 (cd "$marked_worktree" && resolve_workspace && sanitize_workspace_name && resolve_workspace_identity && register_workspace "51610") 2>/dev/null
 moved_entry="$git_root/.git/workspace/registry/moved-worktree.record"
@@ -571,6 +575,7 @@ PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIV
 assert_true "prune keeps a worktree moved under its Git identity" [ -f "$moved_entry" ]
 assert_true "prune keeps a worktree moved with its identity marker" [ -f "$marked_entry" ]
 assert_equal "prune drops no databases of moved worktrees" "" "$(cat "$prune_log")"
+assert_false "prune never runs a live worktree's identity hook" [ -e "$identity_hook_log" ]
 
 git -C "$git_root" worktree remove -f "$moved_worktree-renamed"
 PATH="$fake_bin:$PATH" WORKSPACE_TEST_LSOF_LOG="$lsof_log" WORKSPACE_TEST_ARCHIVE_HOOK_LOG="$archive_hook_log" WORKSPACE_TEST_PRUNE_LOG="$prune_log" sh "$WORKSPACE_HOME/lib/prune.sh" --quiet

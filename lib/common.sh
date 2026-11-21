@@ -195,7 +195,7 @@ resolve_workspace_identity() {
     read_workspace_identity_file .workspace .workspace || return 1
     WORKSPACE_NAME="$_identity_result"
     WORKSPACE_IDENTITY_SOURCE=".workspace"
-  elif [ -x bin/workspace-identity-hook ]; then
+  elif [ -z "${_workspace_skip_identity_hook:-}" ] && [ -x bin/workspace-identity-hook ]; then
     export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
     if ! _hook_workspace_name=$(bin/workspace-identity-hook); then
       err "bin/workspace-identity-hook failed"

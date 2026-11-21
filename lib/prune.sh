@@ -81,35 +81,21 @@ restore_claimed_record() {
   fi
 }
 
-# Prints the identity of the linked worktree in the current directory: the
-# marker that moves with the checkout, otherwise Git's worktree ID, which
-# `git worktree move` keeps. Identity hooks are not run here; a successful
-# bootstrap pins their answer in .workspace.
-live_worktree_identity() {
-  if [ -s .conductor-workspace ]; then
-    cat .conductor-workspace
-  elif [ -s .workspace ]; then
-    cat .workspace
-  else
-    resolve_workspace
-    [ "$WORKSPACE_PROVIDER" = "git" ] || return 1
-    sanitize_workspace_name
-    printf '%s\n' "$WORKSPACE_NAME"
-  fi
+# A moved worktree keeps its identity, and so its databases, but not its
+# registered path. Lists the identity of every live linked worktree the way
+# lifecycle commands resolve it, except that prune never runs a project's
+# identity hook (a successful bootstrap pins its answer in .workspace).
+list_live_identities() {
+  printf '%s\n' "$_live_worktrees" | sed -n 's/^worktree //p' | while IFS= read -r _live_path; do
+    (
+      cd "$_live_path" && resolve_workspace && [ "$WORKSPACE_PROVIDER" = "git" ] &&
+        sanitize_workspace_name && _workspace_skip_identity_hook=1 &&
+        resolve_workspace_identity && printf '%s\n' "$WORKSPACE_NAME"
+    ) 2>/dev/null || true
+  done
 }
 
-# A moved worktree keeps its identity and databases, but not its registered
-# path, so a missing path alone does not mean the worktree was removed.
-identity_used_by_live_worktree() {
-  printf '%s\n' "$_live_worktrees" | sed -n 's/^worktree //p' | {
-    while IFS= read -r _live_path; do
-      _live_name=$(cd "$_live_path" 2>/dev/null && live_worktree_identity) || continue
-      [ "$_live_name" != "$1" ] || exit 0
-    done
-    exit 1
-  }
-}
-
+unset _live_identities
 for _registry_entry in "$_registry_root"/*.record; do
   [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || continue
   _claimed_entry="$_registry_entry.pruning.$$"
@@ -137,7 +123,8 @@ for _registry_entry in "$_registry_root"/*.record; do
     fi
   fi
 
-  if identity_used_by_live_worktree "$WORKSPACE_NAME"; then
+  [ -n "${_live_identities+set}" ] || _live_identities=$(list_live_identities)
+  if printf '%s\n' "$_live_identities" | grep -Fqx -- "$WORKSPACE_NAME"; then
     restore_claimed_record
     continue
   fi
