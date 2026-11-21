@@ -81,6 +81,43 @@ restore_claimed_record() {
   fi
 }
 
+# Prints the identity of the linked worktree in the current directory, resolved
+# as its own lifecycle commands resolve it; nothing for the main checkout.
+# Prune never runs another checkout's code, so a worktree whose identity hook
+# would decide (no marker yet) has an unknown identity.
+live_worktree_identity() {
+  resolve_workspace
+  [ "$WORKSPACE_PROVIDER" = "git" ] || return 0
+  if [ ! -s .conductor-workspace ] && [ ! -e .workspace ] && [ -x bin/workspace-identity-hook ]; then
+    return 1
+  fi
+  sanitize_workspace_name
+  resolve_workspace_identity || return 1
+  printf '%s\n' "$WORKSPACE_NAME"
+}
+
+# A moved worktree keeps its identity, and so its databases, but not its
+# registered path. Collects the identities of every live worktree. A worktree
+# that exists but whose identity cannot be resolved makes the answer unknown;
+# a listed path that no longer exists was deleted and has no identity.
+load_live_identities() {
+  _live_identities=""
+  _live_identities_unknown=""
+  while IFS= read -r _live_path; do
+    [ -d "$_live_path" ] || continue
+    if _live_name=$(cd "$_live_path" && live_worktree_identity 2>/dev/null); then
+      _live_identities="$_live_identities$_live_name
+"
+    else
+      _live_identities_unknown=1
+    fi
+  done <<EOF
+$(printf '%s\n' "$_live_worktrees" | sed -n 's/^worktree //p')
+EOF
+  _live_identities_loaded=1
+}
+
+_live_identities_loaded=""
 for _registry_entry in "$_registry_root"/*.record; do
   [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || continue
   _claimed_entry="$_registry_entry.pruning.$$"
@@ -106,6 +143,17 @@ for _registry_entry in "$_registry_root"/*.record; do
       restore_claimed_record
       continue
     fi
+  fi
+
+  [ -n "$_live_identities_loaded" ] || load_live_identities
+  if printf '%s' "$_live_identities" | grep -Fqx -- "$WORKSPACE_NAME"; then
+    restore_claimed_record
+    continue
+  fi
+  if [ -n "$_live_identities_unknown" ]; then
+    restore_claimed_record
+    [ "$_prune_mode" = "--quiet" ] || warn "Could not read every live worktree's identity — skipping $WORKSPACE_NAME"
+    continue
   fi
 
   [ "$_prune_mode" = "--quiet" ] || header "Pruning removed workspace: $WORKSPACE_NAME"
