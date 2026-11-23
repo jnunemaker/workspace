@@ -169,6 +169,8 @@ run_concurrent_installers "$home"
 
 assert_equal "first concurrent installer succeeds" "0" "$first_status"
 assert_equal "second concurrent installer succeeds" "0" "$second_status"
+assert_equal "only one installer reaches symlink creation" "1" \
+  "$(find "$TEST_TMP/concurrent-ln-barrier" -type f | wc -l | tr -d ' ')"
 assert_equal "concurrent install leaves the intended symlink" \
   "$FAKE_WS/skills/workspace" \
   "$(readlink "$home/.claude/skills/workspace")"
