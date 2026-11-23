@@ -40,17 +40,29 @@ run_concurrent_installers() {
   local first_pid second_pid
 
   mkdir -p "$fake_bin" "$barrier"
+  # Model mkdir returning success to both callers while they race to
+  # create the same directory. Non-lock mkdir calls still behave normally.
+  cat > "$fake_bin/mkdir" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "$WORKSPACE_INSTALL_LOCK" ]; then
+  exec /bin/mkdir -p "$1"
+fi
+exec /bin/mkdir "$@"
+SH
   cat > "$fake_bin/ln" <<'SH'
 #!/bin/sh
 : > "$WORKSPACE_LN_BARRIER/$$"
-if [ ! -d "$WORKSPACE_INSTALL_LOCK" ]; then
+if [ ! -f "$WORKSPACE_INSTALL_LOCK" ]; then
+  tries=0
   while [ "$(find "$WORKSPACE_LN_BARRIER" -type f | wc -l | tr -d ' ')" -lt 2 ]; do
+    [ "$tries" -lt 100 ] || exit 1
+    tries=$((tries + 1))
     sleep 0.01
   done
 fi
 exec /bin/ln "$@"
 SH
-  chmod +x "$fake_bin/ln"
+  chmod +x "$fake_bin/ln" "$fake_bin/mkdir"
 
   PATH="$fake_bin:$PATH" HOME="$home" WORKSPACE_HOME="$FAKE_WS" \
     WORKSPACE_LN_BARRIER="$barrier" \
