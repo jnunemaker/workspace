@@ -40,8 +40,8 @@ run_concurrent_installers() {
   local first_pid second_pid
 
   mkdir -p "$fake_bin" "$barrier"
-  # Model mkdir returning success to both callers while they race to
-  # create the same directory. Non-lock mkdir calls still behave normally.
+  # Ensure the old mkdir-based lock fails the regression even on systems
+  # where mkdir itself does not return success to overlapping callers.
   cat > "$fake_bin/mkdir" <<'SH'
 #!/bin/sh
 if [ "$#" -eq 1 ] && [ "$1" = "$WORKSPACE_INSTALL_LOCK" ]; then
@@ -174,6 +174,22 @@ assert_equal "concurrent install leaves the intended symlink" \
   "$(readlink "$home/.claude/skills/workspace")"
 assert_false "concurrent install does not create a nested workspace symlink" \
   [ -L "$FAKE_WS/skills/workspace/workspace" ]
+
+# ── a lock held by an older installer is still respected ─────────
+
+home=$(fresh_home legacy-lock with_claude)
+legacy_lock="$home/.claude/skills/.workspace-install.lock"
+legacy_bin="$TEST_TMP/legacy-bin"
+mkdir -p "$legacy_lock" "$legacy_bin"
+printf '#!/bin/sh\nexit 0\n' > "$legacy_bin/sleep"
+chmod +x "$legacy_bin/sleep"
+
+legacy_status=0
+PATH="$legacy_bin:$PATH" run_installer "$home" || legacy_status=$?
+assert_equal "installer times out on an older directory lock" "1" "$legacy_status"
+assert_true "installer leaves the older lock untouched" [ -d "$legacy_lock" ]
+assert_false "installer does not link while an older installer holds the lock" \
+  [ -L "$home/.claude/skills/workspace" ]
 
 # ── conflict: existing real directory at target ─────────────────
 
