@@ -75,9 +75,11 @@ install_workspace_skill() {
 
   # Don't let a signal handler remove the next installer's lock after
   # this one has been released.
-  trap '' HUP INT TERM
+  _skill_interrupted=
+  trap '_skill_interrupted=1' HUP INT TERM
   rm "$_skill_lock" 2>/dev/null || _skill_result=1
   trap - EXIT HUP INT TERM
+  [ -z "$_skill_interrupted" ] || exit 1
   return "$_skill_result"
 }
 

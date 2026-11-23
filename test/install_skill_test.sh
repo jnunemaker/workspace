@@ -191,6 +191,18 @@ assert_true "installer leaves the older lock untouched" [ -d "$legacy_lock" ]
 assert_false "installer does not link while an older installer holds the lock" \
   [ -L "$home/.claude/skills/workspace" ]
 
+home=$(fresh_home file-lock with_claude)
+file_lock="$home/.claude/skills/.workspace-install.lock"
+mkdir -p "$(dirname "$file_lock")"
+printf 'held\n' > "$file_lock"
+
+file_status=0
+PATH="$legacy_bin:$PATH" run_installer "$home" || file_status=$?
+assert_equal "installer times out on a regular file lock" "1" "$file_status"
+assert_equal "installer preserves the current lock" "held" "$(cat "$file_lock" 2>/dev/null)"
+assert_false "installer does not link while another installer holds the file lock" \
+  [ -L "$home/.claude/skills/workspace" ]
+
 # ── conflict: existing real directory at target ─────────────────
 
 home=$(fresh_home conflict-dir with_claude)
