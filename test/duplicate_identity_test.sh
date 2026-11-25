@@ -159,6 +159,11 @@ lifecycle "$latecomer" env GIT_DIR="$(git -C "$latecomer" rev-parse --absolute-g
   sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "a collider with GIT_DIR exported is still refused" "1" "$?"
 
+# Git accepts a .git file with CRLF line endings, so the registry must too.
+printf 'gitdir: %s\r\n' "$(git -C "$collider" rev-parse --absolute-git-dir)" > "$collider/.git"
+lifecycle "$latecomer" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "an owner whose .git file has CRLF line endings is still found" "1" "$?"
+
 # An owner that later registers under another identity keeps the first one
 # until it archives it.
 printf 'collider-renamed\n' > "$collider/.workspace"
