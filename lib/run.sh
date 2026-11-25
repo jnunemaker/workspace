@@ -136,12 +136,18 @@ done
 
 # ── Run hook ─────────────────────────────────────────────────────
 
+# Sourced at top level, not through source_project_file, so the hook can still
+# change the arguments passed to Foreman. Errexit is off for the same reason
+# source_project_file gives.
 if [ -x bin/workspace-run-hook ]; then
-  source_project_file bin/workspace-run-hook "$@" || {
-    _run_hook_status=$?
+  set +e
+  . bin/workspace-run-hook
+  _run_hook_status=$?
+  set -e
+  if [ "$_run_hook_status" -ne 0 ]; then
     err "bin/workspace-run-hook failed with status $_run_hook_status"
     exit "$_run_hook_status"
-  }
+  fi
 fi
 
 # ── Start server ─────────────────────────────────────────────────

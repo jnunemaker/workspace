@@ -266,14 +266,13 @@ sanitize_workspace_name() {
 }
 
 # Source a project-owned file into the current shell and return its final
-# status; remaining arguments become its positional parameters. Errexit is off
-# while it runs because /bin/sh 3.2 otherwise exits inside a failing file, even
-# from an if condition, before the caller can say which file failed.
+# status. Errexit is off while it runs because /bin/sh 3.2 otherwise exits
+# inside a failing file, even from an if condition, before the caller can say
+# which file failed.
 source_project_file() {
   local _project_file _project_file_errexit_set _project_file_status
 
   _project_file="$1"
-  shift
   case "$-" in
     *e*) _project_file_errexit_set=1 ;;
     *) _project_file_errexit_set=0 ;;

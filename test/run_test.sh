@@ -461,4 +461,10 @@ assert_true "run names the failing run hook" grep -q 'bin/workspace-run-hook fai
 assert_equal "run hook still runs after the sweep" "10" "$(wc -l < "$WORKSPACE_TEST_LSOF_LOG" | tr -d ' ')"
 assert_false "failed run hook does not start Foreman" [ -f "$log" ]
 
+# A run hook can still change the arguments run passes to Foreman.
+printf 'set -- web\n' > "$app_dir/bin/workspace-run-hook"
+env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-run-hook \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_true "run hook can change Foreman arguments" grep -q '^ARGS=start -f Procfile.dev --env /dev/null web$' "$log"
+
 report "run lifecycle"
