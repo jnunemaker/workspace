@@ -21,7 +21,7 @@ sanitize_workspace_name
 resolve_workspace_identity
 detect_caddy
 detect_vite
-load_dotenv_defaults ./.env
+load_dotenv_or_stop "info stopped"
 
 if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   err "Workspace name cannot produce a safe isolated database suffix"

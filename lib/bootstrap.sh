@@ -217,7 +217,7 @@ fi
 
 # App defaults may contribute values such as ports, but cannot replace the
 # provider, root, or stable database identity already resolved above.
-load_dotenv_defaults ./.env
+load_dotenv_or_stop "bootstrap stopped"
 
 # ── Export workspace DB env vars ─────────────────────────────────
 

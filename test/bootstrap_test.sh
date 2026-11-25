@@ -282,13 +282,30 @@ touch .rails-called
 SCRIPT
 chmod +x bin/workspace-setup-hook bin/rails
 
+failing_hook_output="$TEST_TMP/failing-environment-hook.out"
 assert_false "failing environment hook fails bootstrap" env \
   PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
   CONDUCTOR_WORKSPACE_NAME="failing-environment" \
   WORKSPACE_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
-  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$failing_hook_output" 2>&1
+assert_true "failed environment hook is named with its status" \
+  grep -q 'bin/workspace-environment-hook failed with status 23' "$failing_hook_output"
 assert_false "failed environment hook prevents setup" [ -e .workspace-setup-called ]
 assert_false "failed environment hook prevents Rails preparation" [ -e .rails-called ]
+
+# A failing .env stops bootstrap with a message naming the file before any
+# setup or database work.
+rm bin/workspace-environment-hook
+printf 'false\n' > .env
+failing_env_output="$TEST_TMP/failing-bootstrap-env.out"
+assert_false "failing .env fails bootstrap" env \
+  PATH="/usr/bin:/bin" CONDUCTOR_ROOT_PATH="$root_dir" \
+  CONDUCTOR_WORKSPACE_NAME="failing-environment" \
+  /bin/sh "$WORKSPACE_HOME/lib/bootstrap.sh" >"$failing_env_output" 2>&1
+assert_true "bootstrap names the failing .env" grep -q 'Could not load .env.*bootstrap stopped' "$failing_env_output"
+assert_false "failed .env prevents setup" [ -e .workspace-setup-called ]
+assert_false "failed .env prevents Rails preparation" [ -e .rails-called ]
+rm .env
 
 # A failing dedicated hook is a hard lifecycle boundary. Nothing after it may
 # prepare databases, register the workspace, seed data, or report success.

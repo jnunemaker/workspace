@@ -415,4 +415,53 @@ assert_true "run still sweeps before starting" env PATH="$archive_bin:$PATH" CON
   CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$TEST_TMP/present-procfile.log" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_equal "run sweeps all ten ports" "10" "$(wc -l < "$WORKSPACE_TEST_LSOF_LOG" | tr -d ' ')"
 
+# A failing project file stops run with a message naming that file.
+paths=$(make_run_app "failing-dotenv-run")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/failing-dotenv-run.log"
+output="$TEST_TMP/failing-dotenv-run.out"
+printf 'false\n' > "$app_dir/.env"
+cd "$app_dir"
+: > "$WORKSPACE_TEST_LSOF_LOG"
+assert_false "run fails when .env fails" env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-dotenv-run \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+assert_true "run names the failing .env" grep -q 'Could not load .env.*run stopped' "$output"
+assert_equal "failed .env stops nothing" "" "$(cat "$WORKSPACE_TEST_LSOF_LOG")"
+assert_false "failed .env does not start Foreman" [ -f "$log" ]
+
+paths=$(make_run_app "failing-environment-hook-run")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/failing-environment-hook-run.log"
+output="$TEST_TMP/failing-environment-hook-run.out"
+printf '(exit 23)\n' > "$app_dir/bin/workspace-environment-hook"
+cd "$app_dir"
+: > "$WORKSPACE_TEST_LSOF_LOG"
+assert_false "run fails when the environment hook fails" env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-environment-hook-run \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+assert_true "run names the failing environment hook" grep -q 'bin/workspace-environment-hook failed with status 23' "$output"
+assert_equal "failed environment hook stops nothing" "" "$(cat "$WORKSPACE_TEST_LSOF_LOG")"
+assert_false "failed environment hook does not start Foreman" [ -f "$log" ]
+
+# The run hook still runs after the sweep; its failure keeps its status.
+paths=$(make_run_app "failing-run-hook")
+app_dir=${paths%%|*}
+root_dir=${paths#*|}
+log="$TEST_TMP/failing-run-hook.log"
+output="$TEST_TMP/failing-run-hook.out"
+cat > "$app_dir/bin/workspace-run-hook" <<'SCRIPT'
+#!/bin/sh
+[ -n "${WORKSPACE_TEST_UNSET:-}" ] && export WORKSPACE_TEST_FLAG=1
+SCRIPT
+chmod +x "$app_dir/bin/workspace-run-hook"
+cd "$app_dir"
+: > "$WORKSPACE_TEST_LSOF_LOG"
+env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-run-hook \
+  CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
+assert_equal "run exits with the run hook status" "1" "$?"
+assert_true "run names the failing run hook" grep -q 'bin/workspace-run-hook failed with status 1' "$output"
+assert_equal "run hook still runs after the sweep" "10" "$(wc -l < "$WORKSPACE_TEST_LSOF_LOG" | tr -d ' ')"
+assert_false "failed run hook does not start Foreman" [ -f "$log" ]
+
 report "run lifecycle"

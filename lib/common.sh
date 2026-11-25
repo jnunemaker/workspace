@@ -343,6 +343,22 @@ load_dotenv_defaults() {
   return "$_dotenv_status"
 }
 
+# Load ./.env for a lifecycle command, or stop it with a message naming the
+# file. Errexit is off around the load because /bin/sh 3.2 otherwise exits
+# inside a failing .env, even from an if condition, without printing anything.
+load_dotenv_or_stop() {
+  local _dotenv_or_stop_status
+
+  set +e
+  load_dotenv_defaults ./.env
+  _dotenv_or_stop_status=$?
+  set -e
+  if [ "$_dotenv_or_stop_status" -ne 0 ]; then
+    err "Could not load .env — $1"
+    exit 1
+  fi
+}
+
 # Source project-owned toolchain setup into the current lifecycle shell. This
 # deliberately stays runtime-manager agnostic: projects may activate mise,
 # asdf, rbenv, Nix, or any other environment by updating PATH and exporting
@@ -379,12 +395,11 @@ source_workspace_environment_hook() {
   esac
 
   export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
-  if . ./bin/workspace-environment-hook; then
-    _environment_hook_status=0
-  else
-    _environment_hook_status=$?
-  fi
+  # Errexit is off first: /bin/sh 3.2 otherwise exits inside a failing hook,
+  # even from an if condition, without printing anything.
   set +e
+  . ./bin/workspace-environment-hook
+  _environment_hook_status=$?
 
   WORKSPACE_PROVIDER="$_environment_workspace_provider"
   WORKSPACE_ROOT_PATH="$_environment_workspace_root_path"
@@ -413,6 +428,9 @@ source_workspace_environment_hook() {
 
   if [ "$_environment_errexit_set" -eq 1 ]; then
     set -e
+  fi
+  if [ "$_environment_hook_status" -ne 0 ]; then
+    err "bin/workspace-environment-hook failed with status $_environment_hook_status"
   fi
   return "$_environment_hook_status"
 }
