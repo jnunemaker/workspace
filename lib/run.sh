@@ -43,7 +43,10 @@ resolve_workspace_identity
 # Foreman's env-file values override its parent environment. Load the linked
 # dotenv here instead, restoring values already exported by the manager. This
 # also makes a dotenv WORKSPACE_PORT visible before Git port registration.
-load_dotenv_defaults ./.env
+load_dotenv_defaults ./.env || {
+  err "Could not load .env — run stopped"
+  exit 1
+}
 
 if [ -n "$WORKSPACE_INVALID_NAME" ] || [ "$WORKSPACE_NAME" = "default" ]; then
   err "Workspace name cannot produce a safe isolated database suffix"
@@ -133,8 +136,18 @@ done
 
 # ── Run hook ─────────────────────────────────────────────────────
 
+# Sourced at top level, not through source_project_file, so the hook can still
+# change the arguments passed to Foreman. Errexit is off for the same reason
+# source_project_file gives.
 if [ -x bin/workspace-run-hook ]; then
+  set +e
   . bin/workspace-run-hook
+  _run_hook_status=$?
+  set -e
+  if [ "$_run_hook_status" -ne 0 ]; then
+    err "bin/workspace-run-hook failed with status $_run_hook_status"
+    exit "$_run_hook_status"
+  fi
 fi
 
 # ── Start server ─────────────────────────────────────────────────

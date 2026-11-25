@@ -173,4 +173,14 @@ cd "$generic_worktree"
 output=$(CODEX_HOME="$codex_home" sh "$WORKSPACE_HOME/lib/info.sh")
 assert_true "generic Git worktree info uses the Git provider label" output_has "$output" '^Provider: git$'
 
+# A failing .env stops info with a message naming the file, not a silent exit.
+app_dir=$(create_fake_app "info-failing-env")
+cd "$app_dir"
+printf 'WORKSPACE_PORT=4500\nfalse\n' > .env
+failing_env_output="$TEST_TMP/info-failing-env.out"
+assert_false "info fails when .env fails" env CONDUCTOR_ROOT_PATH="$app_dir" CONDUCTOR_WORKSPACE_NAME="failing-env" \
+  sh "$WORKSPACE_HOME/lib/info.sh" >"$failing_env_output" 2>&1
+assert_true "info names the failing .env" grep -q 'Could not load .env.*info stopped' "$failing_env_output"
+assert_false "info prints nothing after a failing .env" grep -q '^Ports:' "$failing_env_output"
+
 report "workspace info"

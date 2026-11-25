@@ -265,6 +265,28 @@ sanitize_workspace_name() {
   fi
 }
 
+# Source a project-owned file into the current shell and return its final
+# status. The file sees no positional parameters. Errexit is off while it runs
+# because /bin/sh 3.2 otherwise exits inside a failing file, even from an if
+# condition, before the caller can say which file failed.
+source_project_file() {
+  local _project_file _project_file_errexit_set _project_file_status
+
+  _project_file="$1"
+  shift
+  case "$-" in
+    *e*) _project_file_errexit_set=1 ;;
+    *) _project_file_errexit_set=0 ;;
+  esac
+  set +e
+  . "$_project_file"
+  _project_file_status=$?
+  if [ "$_project_file_errexit_set" -eq 1 ]; then
+    set -e
+  fi
+  return "$_project_file_status"
+}
+
 # Import a dotenv file as defaults. Values already exported by the caller or
 # workspace manager are restored afterward, so the file cannot replace them.
 # Hooks sourced later may still deliberately override any value.
@@ -301,9 +323,9 @@ load_dotenv_defaults() {
   _dotenv_conductor_port_set="${CONDUCTOR_PORT+x}"
 
   _dotenv_existing_exports=$(export -p)
+  _dotenv_status=0
   set -a
-  . "$_dotenv_file"
-  _dotenv_status=$?
+  source_project_file "$_dotenv_file" || _dotenv_status=$?
   set +a
   eval "$_dotenv_existing_exports"
 
@@ -379,11 +401,8 @@ source_workspace_environment_hook() {
   esac
 
   export WORKSPACE_PROVIDER WORKSPACE_ROOT_PATH WORKSPACE_NAME
-  if . ./bin/workspace-environment-hook; then
-    _environment_hook_status=0
-  else
-    _environment_hook_status=$?
-  fi
+  _environment_hook_status=0
+  source_project_file ./bin/workspace-environment-hook || _environment_hook_status=$?
   set +e
 
   WORKSPACE_PROVIDER="$_environment_workspace_provider"
@@ -413,6 +432,9 @@ source_workspace_environment_hook() {
 
   if [ "$_environment_errexit_set" -eq 1 ]; then
     set -e
+  fi
+  if [ "$_environment_hook_status" -ne 0 ]; then
+    err "bin/workspace-environment-hook failed with status $_environment_hook_status"
   fi
   return "$_environment_hook_status"
 }
