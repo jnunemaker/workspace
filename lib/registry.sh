@@ -237,9 +237,15 @@ workspace_registered_to_other_worktree() {
         *) _owner_dot_git="$_owner_git_dir/$_owner_dot_git" ;;
       esac
       _registered_owner=$(cd "$(dirname "$_owner_dot_git")" 2>/dev/null && pwd -P) || return 1
-      # The checkout there must still point back to this Git worktree directory.
-      [ "$(cd "$_registered_owner" && canonical_git_path "$(git rev-parse --git-dir 2>/dev/null)")" = \
-        "$(cd "$_owner_git_dir" && pwd -P)" ]
+      # The checkout's .git file must still point back to this directory. Read
+      # it directly: a caller's GIT_DIR would override git rev-parse there.
+      _owner_link=$(sed -n 's/^gitdir: //p' "$_owner_dot_git" 2>/dev/null)
+      case "$_owner_link" in
+        "") return 1 ;;
+        /*) ;;
+        *) _owner_link="$_registered_owner/$_owner_link" ;;
+      esac
+      [ "$(cd "$_owner_link" 2>/dev/null && pwd -P)" = "$(cd "$_owner_git_dir" && pwd -P)" ]
       return
     done
     return 1

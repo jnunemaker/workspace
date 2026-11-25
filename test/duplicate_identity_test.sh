@@ -154,6 +154,11 @@ assert_equal "the owner of an older record still runs" "0" "$?"
 assert_equal "the owner's run upgrades the record" \
   "$(cat "$(git -C "$collider" rev-parse --absolute-git-dir)/workspace-owner-token")" "$(sed -n '5p' "$shared_entry")"
 
+# A caller's exported GIT_DIR, as in a Git hook, does not hide the owner.
+lifecycle "$latecomer" env GIT_DIR="$(git -C "$latecomer" rev-parse --absolute-git-dir)" \
+  sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "a collider with GIT_DIR exported is still refused" "1" "$?"
+
 # An owner that later registers under another identity keeps the first one
 # until it archives it.
 printf 'collider-renamed\n' > "$collider/.workspace"
