@@ -198,6 +198,26 @@ select_available_workspace_port() {
   printf '%s\n' "$_selected_port"
 }
 
+# Worktree names that match in their first 40 characters, or differ only in
+# characters sanitizing drops, share one identity. A second worktree must not
+# take over the first one's record: they would share databases and ports, and
+# archiving either would drop the other's databases. Succeeds, leaving the
+# owner's path in _registered_owner, while the record names another worktree
+# of this repository that still exists.
+workspace_registered_to_other_worktree() {
+  [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || return 1
+  [ "$(sed -n '1p' "$_registry_entry")" = "$WORKSPACE_NAME" ] || return 1
+  _registered_owner=$(sed -n '3p' "$_registry_entry")
+  [ -n "$_registered_owner" ] && [ -d "$_registered_owner" ] || return 1
+  _registered_owner_real=$(cd "$_registered_owner" && pwd -P) || return 1
+  [ "$_registered_owner_real" != "$(cd "$_registered_worktree" && pwd -P)" ] || return 1
+  # A path that was moved or removed and reused is no longer that worktree.
+  _registered_owner_top=$(cd "$_registered_owner_real" && canonical_git_path "$(git rev-parse --show-toplevel 2>/dev/null)") || return 1
+  [ "$_registered_owner_top" = "$_registered_owner_real" ] || return 1
+  _registered_owner_common=$(cd "$_registered_owner_real" && canonical_git_path "$(git rev-parse --git-common-dir 2>/dev/null)") || return 1
+  [ "$_registered_owner_common" = "$WORKSPACE_GIT_COMMON_DIR" ]
+}
+
 register_workspace() {
   [ "${WORKSPACE_PROVIDER:-}" = "git" ] || return 0
   _registry_root=$(workspace_registry_root) || return 1
@@ -215,6 +235,13 @@ register_workspace() {
     _registry_lock_was_owned=1
   else
     wait_for_workspace_registry_lock || return 1
+  fi
+
+  if workspace_registered_to_other_worktree; then
+    err "Workspace $WORKSPACE_NAME is already registered to another worktree: $_registered_owner"
+    err "Names that match in their first 40 characters, or differ only in non-ASCII characters, share databases and ports. Rename this worktree, or archive the other one first."
+    [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
+    return 1
   fi
 
   if [ -n "$_registered_port" ]; then
