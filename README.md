@@ -303,9 +303,9 @@ native cleanup could not complete.
 
 Worktree names that match in their first 40 characters, or differ only in
 non-ASCII characters, sanitize to the same workspace name and would share its
-databases and ports. While the first such worktree still exists, `bootstrap`
-and `run` in another one refuse and name it; rename the new worktree or
-archive the first.
+databases and ports. While the first such worktree still exists, `bootstrap`,
+`run`, and `archive` in another one refuse and name it; rename the new
+worktree or archive the first.
 
 ## Project application URL
 

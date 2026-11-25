@@ -78,6 +78,15 @@ assert_true "run refusal names the other worktree" \
 assert_true "run refusal leaves the first worktree's record alone" cmp -s "$TEST_TMP/shared-record.expected" "$shared_entry"
 assert_equal "refused run sweeps no ports and starts nothing" "" "$(cat "$log")"
 
+# Archive from the refused worktree would tear down the owner's resources.
+: > "$log"
+error=$(lifecycle "$second" sh "$WORKSPACE_HOME/lib/archive.sh" 2>&1 >/dev/null)
+assert_equal "second worktree with the same identity fails archive" "1" "$?"
+assert_true "archive refusal names the other worktree" \
+  sh -c 'printf "%s\n" "$1" | grep -Fq "already registered to another worktree: $2"' _ "$error" "$first"
+assert_true "archive refusal leaves the first worktree's record alone" cmp -s "$TEST_TMP/shared-record.expected" "$shared_entry"
+assert_equal "refused archive sweeps no ports and drops no databases" "" "$(cat "$log")"
+
 # The owner may register again, from its path or another spelling of it.
 lifecycle "$first" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_equal "the owning worktree still runs" "0" "$?"
@@ -101,6 +110,16 @@ lifecycle "$reused" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "a leftover directory at the owner's path does not block the identity" "0" "$?"
 assert_equal "the new worktree takes the record" "$reused" "$(sed -n '3p' "$shared_entry")"
 git -C "$git_root" worktree remove -f "$reused"
+
+# Nor does another worktree that now sits at that path with its own identity.
+git -C "$git_root" worktree add -q --detach "$reused"
+printf 'other-identity\n' > "$reused/.workspace"
+latest=$(add_worktree "feature-implement-the-new-billing-system-part-4")
+lifecycle "$latest" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "a different identity at the owner's path does not block the identity" "0" "$?"
+assert_equal "the latest worktree takes the record" "$latest" "$(sed -n '3p' "$shared_entry")"
+git -C "$git_root" worktree remove -f "$reused"
+git -C "$git_root" worktree remove -f "$latest"
 
 # Characters sanitizing drops collapse names too: both of these become "wt".
 accented=$(add_worktree "$(printf '\303\274-wt-\303\251')")

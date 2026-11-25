@@ -63,6 +63,11 @@ if [ -z "$_archive_registry_entry" ] && [ "$WORKSPACE_PROVIDER" = "git" ]; then
     exit 1
   }
   release_workspace_registry_lock_on_exit
+  # The other worktree's ports and databases are not this checkout's to drop.
+  if workspace_registered_to_other_worktree; then
+    refuse_workspace_registered_to_other_worktree
+    exit 1
+  fi
 fi
 
 header "Archiving workspace: $WORKSPACE_NAME"

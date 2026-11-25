@@ -198,24 +198,48 @@ select_available_workspace_port() {
   printf '%s\n' "$_selected_port"
 }
 
+# Prints the identity of the linked worktree in the current directory, resolved
+# as its own lifecycle commands resolve it; nothing for the main checkout.
+# Never runs another checkout's code, so a worktree whose identity hook would
+# decide (no marker yet) has an unknown identity.
+live_worktree_identity() {
+  resolve_workspace
+  [ "$WORKSPACE_PROVIDER" = "git" ] || return 0
+  if [ ! -s .conductor-workspace ] && [ ! -e .workspace ] && [ -x bin/workspace-identity-hook ]; then
+    return 1
+  fi
+  sanitize_workspace_name
+  resolve_workspace_identity || return 1
+  printf '%s\n' "$WORKSPACE_NAME"
+}
+
 # Worktree names that match in their first 40 characters, or differ only in
 # characters sanitizing drops, share one identity. A second worktree must not
-# take over the first one's record: they would share databases and ports, and
-# archiving either would drop the other's databases. Succeeds, leaving the
-# owner's path in _registered_owner, while the record names another worktree
-# of this repository that still exists.
+# take over, or tear down, the first one's record: they would share databases
+# and ports, and archiving either would drop the other's databases. Succeeds,
+# leaving the owner's path in _registered_owner, while this identity's record
+# names another worktree of this repository that still exists there with the
+# same identity.
 workspace_registered_to_other_worktree() {
-  [ -f "$_registry_entry" ] && [ ! -L "$_registry_entry" ] || return 1
-  [ "$(sed -n '1p' "$_registry_entry")" = "$WORKSPACE_NAME" ] || return 1
-  _registered_owner=$(sed -n '3p' "$_registry_entry")
+  _owner_entry=$(workspace_registry_entry) || return 1
+  [ -f "$_owner_entry" ] && [ ! -L "$_owner_entry" ] || return 1
+  [ "$(sed -n '1p' "$_owner_entry")" = "$WORKSPACE_NAME" ] || return 1
+  _registered_owner=$(sed -n '3p' "$_owner_entry")
   [ -n "$_registered_owner" ] && [ -d "$_registered_owner" ] || return 1
-  _registered_owner_real=$(cd "$_registered_owner" && pwd -P) || return 1
-  [ "$_registered_owner_real" != "$(cd "$_registered_worktree" && pwd -P)" ] || return 1
+  _registered_owner=$(cd "$_registered_owner" && pwd -P) || return 1
+  _owner_self=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+  [ "$_registered_owner" != "$(cd "$_owner_self" && pwd -P)" ] || return 1
   # A path that was moved or removed and reused is no longer that worktree.
-  _registered_owner_top=$(cd "$_registered_owner_real" && canonical_git_path "$(git rev-parse --show-toplevel 2>/dev/null)") || return 1
-  [ "$_registered_owner_top" = "$_registered_owner_real" ] || return 1
-  _registered_owner_common=$(cd "$_registered_owner_real" && canonical_git_path "$(git rev-parse --git-common-dir 2>/dev/null)") || return 1
-  [ "$_registered_owner_common" = "$WORKSPACE_GIT_COMMON_DIR" ]
+  _owner_top=$(cd "$_registered_owner" && canonical_git_path "$(git rev-parse --show-toplevel 2>/dev/null)") || return 1
+  [ "$_owner_top" = "$_registered_owner" ] || return 1
+  _owner_common=$(cd "$_registered_owner" && canonical_git_path "$(git rev-parse --git-common-dir 2>/dev/null)") || return 1
+  [ "$_owner_common" = "$WORKSPACE_GIT_COMMON_DIR" ] || return 1
+  [ "$(cd "$_registered_owner" && live_worktree_identity 2>/dev/null)" = "$WORKSPACE_NAME" ]
+}
+
+refuse_workspace_registered_to_other_worktree() {
+  err "Workspace $WORKSPACE_NAME is already registered to another worktree: $_registered_owner"
+  err "Names that match in their first 40 characters, or differ only in non-ASCII characters, share databases and ports. Rename this worktree, or archive the other one first."
 }
 
 register_workspace() {
@@ -238,8 +262,7 @@ register_workspace() {
   fi
 
   if workspace_registered_to_other_worktree; then
-    err "Workspace $WORKSPACE_NAME is already registered to another worktree: $_registered_owner"
-    err "Names that match in their first 40 characters, or differ only in non-ASCII characters, share databases and ports. Rename this worktree, or archive the other one first."
+    refuse_workspace_registered_to_other_worktree
     [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
     return 1
   fi
