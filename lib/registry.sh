@@ -198,28 +198,14 @@ select_available_workspace_port() {
   printf '%s\n' "$_selected_port"
 }
 
-# Prints the identity of the linked worktree in the current directory, resolved
-# as its own lifecycle commands resolve it; nothing for the main checkout.
-# Never runs another checkout's code, so a worktree whose identity hook would
-# decide (no marker yet) has an unknown identity.
-live_worktree_identity() {
-  resolve_workspace
-  [ "$WORKSPACE_PROVIDER" = "git" ] || return 0
-  if [ ! -s .conductor-workspace ] && [ ! -e .workspace ] && [ -x bin/workspace-identity-hook ]; then
-    return 1
-  fi
-  sanitize_workspace_name
-  resolve_workspace_identity || return 1
-  printf '%s\n' "$WORKSPACE_NAME"
-}
-
 # Worktree names that match in their first 40 characters, or differ only in
 # characters sanitizing drops, share one identity. A second worktree must not
 # take over, or tear down, the first one's record: they would share databases
 # and ports, and archiving either would drop the other's databases. Succeeds,
 # leaving the owner's path in _registered_owner, while this identity's record
-# names another worktree of this repository that still exists there with the
-# same identity.
+# names another worktree of this repository that still exists. The owner's
+# identity is not re-read there: an unreadable or drifted identity must keep
+# the reservation, not free it.
 workspace_registered_to_other_worktree() {
   _owner_entry=$(workspace_registry_entry) || return 1
   [ -f "$_owner_entry" ] && [ ! -L "$_owner_entry" ] || return 1
@@ -229,12 +215,11 @@ workspace_registered_to_other_worktree() {
   _registered_owner=$(cd "$_registered_owner" && pwd -P) || return 1
   _owner_self=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
   [ "$_registered_owner" != "$(cd "$_owner_self" && pwd -P)" ] || return 1
-  # A path that was moved or removed and reused is no longer that worktree.
+  # A leftover directory at that path is no longer a worktree.
   _owner_top=$(cd "$_registered_owner" && canonical_git_path "$(git rev-parse --show-toplevel 2>/dev/null)") || return 1
   [ "$_owner_top" = "$_registered_owner" ] || return 1
   _owner_common=$(cd "$_registered_owner" && canonical_git_path "$(git rev-parse --git-common-dir 2>/dev/null)") || return 1
-  [ "$_owner_common" = "$WORKSPACE_GIT_COMMON_DIR" ] || return 1
-  [ "$(cd "$_registered_owner" && live_worktree_identity 2>/dev/null)" = "$WORKSPACE_NAME" ]
+  [ "$_owner_common" = "$WORKSPACE_GIT_COMMON_DIR" ]
 }
 
 refuse_workspace_registered_to_other_worktree() {

@@ -111,16 +111,6 @@ assert_equal "a leftover directory at the owner's path does not block the identi
 assert_equal "the new worktree takes the record" "$reused" "$(sed -n '3p' "$shared_entry")"
 git -C "$git_root" worktree remove -f "$reused"
 
-# Nor does another worktree that now sits at that path with its own identity.
-git -C "$git_root" worktree add -q --detach "$reused"
-printf 'other-identity\n' > "$reused/.workspace"
-latest=$(add_worktree "feature-implement-the-new-billing-system-part-4")
-lifecycle "$latest" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
-assert_equal "a different identity at the owner's path does not block the identity" "0" "$?"
-assert_equal "the latest worktree takes the record" "$latest" "$(sed -n '3p' "$shared_entry")"
-git -C "$git_root" worktree remove -f "$reused"
-git -C "$git_root" worktree remove -f "$latest"
-
 # Characters sanitizing drops collapse names too: both of these become "wt".
 accented=$(add_worktree "$(printf '\303\274-wt-\303\251')")
 plain=$(add_worktree "wt")
