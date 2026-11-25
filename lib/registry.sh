@@ -198,18 +198,40 @@ select_available_workspace_port() {
   printf '%s\n' "$_selected_port"
 }
 
+# Each registered worktree writes the identity it registered to this file in
+# its own Git worktree directory, which follows it through `git worktree move`
+# and is deleted with it.
+workspace_owner_file() {
+  printf '%s/workspace-registered-name\n' "$1"
+}
+
 # Worktree names that match in their first 40 characters, or differ only in
 # characters sanitizing drops, share one identity. A second worktree must not
 # take over, or tear down, the first one's record: they would share databases
 # and ports, and archiving either would drop the other's databases. Succeeds,
 # leaving the owner's path in _registered_owner, while this identity's record
-# names another worktree of this repository that still exists. The owner's
-# identity is not re-read there: an unreadable or drifted identity must keep
-# the reservation, not free it.
+# belongs to another worktree of this repository that still exists. The
+# record's fifth line names the owner's Git worktree directory; records from
+# older versions have none and are matched by their worktree path.
 workspace_registered_to_other_worktree() {
   _owner_entry=$(workspace_registry_entry) || return 1
   [ -f "$_owner_entry" ] && [ ! -L "$_owner_entry" ] || return 1
   [ "$(sed -n '1p' "$_owner_entry")" = "$WORKSPACE_NAME" ] || return 1
+  _owner_git_dir=$(sed -n '5p' "$_owner_entry")
+  if [ -n "$_owner_git_dir" ]; then
+    [ "$_owner_git_dir" != "$(canonical_git_path "$(git rev-parse --git-dir 2>/dev/null)")" ] || return 1
+    [ "$(cat "$(workspace_owner_file "$_owner_git_dir")" 2>/dev/null)" = "$WORKSPACE_NAME" ] || return 1
+    # Git keeps the path of the worktree's .git file here, updated on move.
+    _owner_dot_git=$(sed -n '1p' "$_owner_git_dir/gitdir" 2>/dev/null)
+    case "$_owner_dot_git" in
+      "") return 1 ;;
+      /*) ;;
+      *) _owner_dot_git="$_owner_git_dir/$_owner_dot_git" ;;
+    esac
+    [ -f "$_owner_dot_git" ] || return 1
+    _registered_owner=$(cd "$(dirname "$_owner_dot_git")" && pwd -P)
+    return
+  fi
   _registered_owner=$(sed -n '3p' "$_owner_entry")
   [ -n "$_registered_owner" ] && [ -d "$_registered_owner" ] || return 1
   _registered_owner=$(cd "$_registered_owner" && pwd -P) || return 1
@@ -236,6 +258,7 @@ register_workspace() {
     _registered_port=$(validate_workspace_port_block "$_registered_port") || return 1
   fi
   _registered_worktree=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+  _registered_git_dir=$(canonical_git_path "$(git rev-parse --git-dir 2>/dev/null)") || return 1
   _registry_temp="$_registry_root/.record.$$"
 
   mkdir -p "$_registry_root" || return 1
@@ -259,11 +282,12 @@ register_workspace() {
     fi
   fi
 
-  if ! {
+  if ! printf '%s\n' "$WORKSPACE_NAME" > "$(workspace_owner_file "$_registered_git_dir")" || ! {
     printf '%s\n' "$WORKSPACE_NAME"
     printf '%s\n' "$WORKSPACE_ROOT_PATH"
     printf '%s\n' "$_registered_worktree"
     printf '%s\n' "$_registered_port"
+    printf '%s\n' "$_registered_git_dir"
   } > "$_registry_temp"; then
     rm -f "$_registry_temp"
     [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock

@@ -58,6 +58,8 @@ shared_entry="$git_root/.git/workspace/registry/feature-implement-the-new-billin
 lifecycle "$first" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "first long-named worktree bootstraps" "0" "$?"
 assert_equal "first long-named worktree owns the shared identity's record" "$first" "$(sed -n '3p' "$shared_entry")"
+assert_equal "the record names the owner's Git worktree directory" \
+  "$(cd "$first" && canonical_git_path "$(git rev-parse --git-dir)")" "$(sed -n '5p' "$shared_entry")"
 cp "$shared_entry" "$TEST_TMP/shared-record.expected"
 
 : > "$log"
@@ -110,6 +112,49 @@ lifecycle "$reused" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "a leftover directory at the owner's path does not block the identity" "0" "$?"
 assert_equal "the new worktree takes the record" "$reused" "$(sed -n '3p' "$shared_entry")"
 git -C "$git_root" worktree remove -f "$reused"
+
+# A moved owner keeps its identity, its databases, and its Git worktree
+# directory, but not its path. It still owns the record.
+owner=$(add_worktree "feature-implement-the-new-billing-system-part-5")
+lifecycle "$owner" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "an owner bootstraps before moving" "0" "$?"
+git -C "$git_root" worktree move "$owner" "$TEST_TMP/moved-owner"
+moved=$(cd "$TEST_TMP/moved-owner" && pwd -P)
+cp "$shared_entry" "$TEST_TMP/moved-record.expected"
+collider=$(add_worktree "feature-implement-the-new-billing-system-part-6")
+: > "$log"
+error=$(lifecycle "$collider" sh "$WORKSPACE_HOME/lib/bootstrap.sh" 2>&1 >/dev/null)
+assert_equal "a colliding worktree is refused while the owner lives at a new path" "1" "$?"
+assert_true "the refusal names the owner's new path" \
+  sh -c 'printf "%s\n" "$1" | grep -Fq "already registered to another worktree: $2"' _ "$error" "$moved"
+assert_true "the refusal leaves the moved owner's record alone" cmp -s "$TEST_TMP/moved-record.expected" "$shared_entry"
+assert_equal "the refused collider runs no setup or database commands" "" "$(cat "$log")"
+lifecycle "$moved" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_equal "the moved owner still runs" "0" "$?"
+assert_equal "the moved owner's record follows it" "$moved" "$(sed -n '3p' "$shared_entry")"
+
+# Once the owner is removed, a worktree with another identity at its old path
+# does not keep the name blocked.
+git -C "$git_root" worktree remove -f "$moved"
+git -C "$git_root" worktree add -q --detach "$moved"
+printf 'other-identity\n' > "$moved/.workspace"
+lifecycle "$collider" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "another identity at the removed owner's path does not block the name" "0" "$?"
+assert_equal "the collider takes the record" "$collider" "$(sed -n '3p' "$shared_entry")"
+git -C "$git_root" worktree remove -f "$moved"
+
+# A four-line record from an older version still blocks by its path, and the
+# owner's next registration adds its Git worktree directory.
+head -n 4 "$shared_entry" > "$shared_entry.old" && mv "$shared_entry.old" "$shared_entry"
+latecomer=$(add_worktree "feature-implement-the-new-billing-system-part-7")
+lifecycle "$latecomer" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "an older record still refuses a collider while its path is live" "1" "$?"
+lifecycle "$collider" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_equal "the owner of an older record still runs" "0" "$?"
+assert_equal "the owner's run upgrades the record" \
+  "$(cd "$collider" && canonical_git_path "$(git rev-parse --git-dir)")" "$(sed -n '5p' "$shared_entry")"
+git -C "$git_root" worktree remove -f "$collider"
+git -C "$git_root" worktree remove -f "$latecomer"
 
 # Characters sanitizing drops collapse names too: both of these become "wt".
 accented=$(add_worktree "$(printf '\303\274-wt-\303\251')")
