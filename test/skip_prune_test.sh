@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 
 unset SUPERCONDUCTOR_ROOT_PATH SUPERCONDUCTOR_WORKSPACE_NAME SUPERCONDUCTOR_WORKSPACE_PATH 2>/dev/null || true
 unset SUPERSET_ROOT_PATH SUPERSET_WORKSPACE_NAME CONDUCTOR_ROOT_PATH CONDUCTOR_WORKSPACE_NAME 2>/dev/null || true
-unset WORKSPACE_PORT WORKSPACE_SKIP_PRUNE 2>/dev/null || true
+unset WORKSPACE_PORT 2>/dev/null || true
 
 git_root="$TEST_TMP/skip-prune-root"
 mkdir -p "$git_root/bin" "$git_root/config"
@@ -77,13 +77,21 @@ for command in bootstrap run; do
 done
 
 # The SessionEnd hook's deferred prune is automatic too. It schedules cleanup
-# in the background, so the run without the variable goes second and is
-# awaited; only its one scheduling may reach the log.
+# in the background; that job inherits fd 9, so each command substitution
+# below ends only after any job it started has written to the log.
 : > "$deferred_log"
-workspace_command env WORKSPACE_SKIP_PRUNE=1 sh "$WORKSPACE_HOME/lib/prune.sh" --deferred >/dev/null
-workspace_command sh "$WORKSPACE_HOME/lib/prune.sh" --deferred >/dev/null
-assert_true "deferred prune without WORKSPACE_SKIP_PRUNE schedules cleanup" wait_until [ -s "$deferred_log" ]
-assert_equal "deferred prune with WORKSPACE_SKIP_PRUNE=1 schedules nothing" "deferred" "$(cat "$deferred_log")"
+output=$(workspace_command env WORKSPACE_SKIP_PRUNE=1 sh "$WORKSPACE_HOME/lib/prune.sh" --deferred 9>&1)
+assert_equal "deferred prune with WORKSPACE_SKIP_PRUNE=1 schedules nothing" "" "$(cat "$deferred_log")"
+output=$(workspace_command sh "$WORKSPACE_HOME/lib/prune.sh" --deferred 9>&1)
+assert_equal "deferred prune without WORKSPACE_SKIP_PRUNE schedules cleanup" "deferred" "$(cat "$deferred_log")"
+
+# The opt-out is read from the caller's environment, like bootstrap and the
+# SessionEnd hook, so a project .env cannot turn it on for run alone.
+write_stale_record
+printf 'WORKSPACE_SKIP_PRUNE=1\n' > "$lane/.env"
+workspace_command sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null
+assert_false "run ignores WORKSPACE_SKIP_PRUNE from the project .env" [ -f "$stale_entry" ]
+rm -f "$lane/.env"
 
 # An explicit prune is a request, so the variable does not stop it.
 write_stale_record

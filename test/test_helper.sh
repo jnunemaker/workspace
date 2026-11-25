@@ -8,6 +8,9 @@ PASS=0
 FAIL=0
 ERRORS=""
 
+# Tests exercise the automatic prune unless they opt out themselves.
+unset WORKSPACE_SKIP_PRUNE 2>/dev/null || true
+
 # Create a temporary directory for test fixtures
 TEST_TMP=$(mktemp -d)
 trap 'rm -rf "$TEST_TMP"' EXIT

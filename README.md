@@ -403,7 +403,7 @@ To skip either install, set `WORKSPACE_SKIP_CLAUDE_SKILL=1` or `WORKSPACE_SKIP_C
 - `WORKSPACE_SKIP_CODEX_SKILL` — set to `1` to skip the Codex skill install
 - `WORKSPACE_APP_URL_TEMPLATE` — optional shared display address with a literal `{port}` placeholder; see [Project application URL](#project-application-url)
 - `WORKSPACE_APP_URL` — complete display address, overriding the template; a legacy run-hook assignment affects only `run`
-- `WORKSPACE_SKIP_PRUNE` — set to `1` to skip the automatic removed-worktree cleanup that `bootstrap`, `run`, and the Codex `SessionEnd` hook start (useful when many worktrees are created and removed at once); an explicit `workspace prune` still runs
+- `WORKSPACE_SKIP_PRUNE` — set to `1` to skip the automatic removed-worktree cleanup that `bootstrap`, `run`, and the Codex `SessionEnd` hook start (useful when many worktrees are created and removed at once); read from the environment, not `.env`; an explicit `workspace prune` still runs
 - `WORKSPACE_REGISTRY_LOCK_ATTEMPTS` — how many 0.1-second retries `run`, `bootstrap`, and `archive` make for the shared Git worktree lock before failing (default `6000`, about ten minutes; `0` waits forever)
 
 `workspace run` loads the linked `.env` as defaults before sourcing the run hook. Values already exported by the workspace manager, and values exported by the hook, take precedence. Keep `.env` shell-compatible because the CLI sources it with `/bin/sh`.
