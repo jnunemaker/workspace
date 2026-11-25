@@ -61,7 +61,7 @@ fi
 # interrupted, without adding work for existing providers or empty repos.
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
-  WORKSPACE_SKIP_PRUNE="$_workspace_skip_prune" sh "$WORKSPACE_LIB/prune.sh" --quiet
+  env WORKSPACE_SKIP_PRUNE="$_workspace_skip_prune" sh "$WORKSPACE_LIB/prune.sh" --quiet
 fi
 
 # A Codex run may be invoked before setup completes. Publish a collision-free
