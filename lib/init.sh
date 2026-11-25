@@ -213,6 +213,13 @@ _upgrade_codex_cleanup_table() {
 _ensure_codex_cleanup() {
   _cleanup_codex_environment="$1"
 
+  # Detecting existing cleanup needs Ruby. Without it, guessing "missing"
+  # would add a second [cleanup] table, which Codex cannot parse.
+  if ! command -v ruby >/dev/null 2>&1; then
+    warn "Ruby is not available — skipped Codex cleanup in $_cleanup_codex_environment"
+    return 0
+  fi
+
   # Any explicit cleanup is a public project contract. Only replace the exact
   # historical Workspace archive default; inline/platform/custom values stay
   # byte-for-byte unchanged.
