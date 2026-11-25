@@ -198,18 +198,54 @@ select_available_workspace_port() {
   printf '%s\n' "$_selected_port"
 }
 
+# Each registered worktree keeps a random token in its own Git worktree
+# directory, which follows it through `git worktree move` and is deleted with
+# it. Prints this worktree's token, creating it when asked to.
+workspace_worktree_token() {
+  _token_git_dir=$(canonical_git_path "$(git rev-parse --git-dir 2>/dev/null)") || return 1
+  _token_file="$_token_git_dir/workspace-owner-token"
+  if [ ! -s "$_token_file" ] && [ "${1:-}" = create ]; then
+    od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' > "$_token_file.$$" || return 1
+    mv "$_token_file.$$" "$_token_file" || return 1
+  fi
+  _token=$(cat "$_token_file" 2>/dev/null) || return 1
+  [ -n "$_token" ] && printf '%s\n' "$_token"
+}
+
 # Worktree names that match in their first 40 characters, or differ only in
 # characters sanitizing drops, share one identity. A second worktree must not
 # take over, or tear down, the first one's record: they would share databases
 # and ports, and archiving either would drop the other's databases. Succeeds,
 # leaving the owner's path in _registered_owner, while this identity's record
-# names another worktree of this repository that still exists. The owner's
-# identity is not re-read there: an unreadable or drifted identity must keep
-# the reservation, not free it.
+# belongs to another worktree of this repository that still exists. The
+# record's fifth line is the owner's token; records from older versions have
+# none and are matched by their worktree path.
 workspace_registered_to_other_worktree() {
   _owner_entry=$(workspace_registry_entry) || return 1
   [ -f "$_owner_entry" ] && [ ! -L "$_owner_entry" ] || return 1
   [ "$(sed -n '1p' "$_owner_entry")" = "$WORKSPACE_NAME" ] || return 1
+  _owner_token=$(sed -n '5p' "$_owner_entry")
+  if [ -n "$_owner_token" ]; then
+    [ "$_owner_token" != "$(workspace_worktree_token)" ] || return 1
+    for _owner_git_dir in "$WORKSPACE_GIT_COMMON_DIR"/worktrees/*; do
+      [ "$(cat "$_owner_git_dir/workspace-owner-token" 2>/dev/null)" = "$_owner_token" ] || continue
+      # Git keeps the path of the worktree's .git file here, updated on move.
+      _owner_dot_git=$(sed -n '1p' "$_owner_git_dir/gitdir" 2>/dev/null)
+      case "$_owner_dot_git" in
+        "") return 1 ;;
+        /*) ;;
+        *) _owner_dot_git="$_owner_git_dir/$_owner_dot_git" ;;
+      esac
+      _registered_owner=$(cd "$(dirname "$_owner_dot_git")" 2>/dev/null && pwd -P) || return 1
+      # The checkout's .git file must still point back to this directory.
+      # Resolve that file itself: a caller's GIT_DIR would override a lookup
+      # from the checkout.
+      _owner_link=$(git rev-parse --resolve-git-dir "$_owner_dot_git" 2>/dev/null) || return 1
+      [ "$(cd "$_owner_link" 2>/dev/null && pwd -P)" = "$(cd "$_owner_git_dir" && pwd -P)" ]
+      return
+    done
+    return 1
+  fi
   _registered_owner=$(sed -n '3p' "$_owner_entry")
   [ -n "$_registered_owner" ] && [ -d "$_registered_owner" ] || return 1
   _registered_owner=$(cd "$_registered_owner" && pwd -P) || return 1
@@ -259,11 +295,12 @@ register_workspace() {
     fi
   fi
 
-  if ! {
+  if ! _registered_token=$(workspace_worktree_token create) || ! {
     printf '%s\n' "$WORKSPACE_NAME"
     printf '%s\n' "$WORKSPACE_ROOT_PATH"
     printf '%s\n' "$_registered_worktree"
     printf '%s\n' "$_registered_port"
+    printf '%s\n' "$_registered_token"
   } > "$_registry_temp"; then
     rm -f "$_registry_temp"
     [ "$_registry_lock_was_owned" -eq 1 ] || release_workspace_registry_lock
