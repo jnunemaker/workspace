@@ -444,23 +444,20 @@ assert_true "run names the failing environment hook" grep -q 'bin/workspace-envi
 assert_equal "failed environment hook stops nothing" "" "$(cat "$WORKSPACE_TEST_LSOF_LOG")"
 assert_false "failed environment hook does not start Foreman" [ -f "$log" ]
 
-# The run hook still runs after the sweep; its failure keeps its status.
+# The run hook still runs after the sweep, and run exits with its status.
 paths=$(make_run_app "failing-run-hook")
 app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/failing-run-hook.log"
 output="$TEST_TMP/failing-run-hook.out"
-cat > "$app_dir/bin/workspace-run-hook" <<'SCRIPT'
-#!/bin/sh
-[ -n "${WORKSPACE_TEST_UNSET:-}" ] && export WORKSPACE_TEST_FLAG=1
-SCRIPT
+printf '(exit 23)\n' > "$app_dir/bin/workspace-run-hook"
 chmod +x "$app_dir/bin/workspace-run-hook"
 cd "$app_dir"
 : > "$WORKSPACE_TEST_LSOF_LOG"
 env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-run-hook \
   CONDUCTOR_ROOT_PATH="$root_dir" WORKSPACE_TEST_RUN_LOG="$log" sh "$WORKSPACE_HOME/lib/run.sh" >"$output" 2>&1
-assert_equal "run exits with the run hook status" "1" "$?"
-assert_true "run names the failing run hook" grep -q 'bin/workspace-run-hook failed with status 1' "$output"
+assert_equal "run exits with the run hook status" "23" "$?"
+assert_true "run names the failing run hook" grep -q 'bin/workspace-run-hook failed with status 23' "$output"
 assert_equal "run hook still runs after the sweep" "10" "$(wc -l < "$WORKSPACE_TEST_LSOF_LOG" | tr -d ' ')"
 assert_false "failed run hook does not start Foreman" [ -f "$log" ]
 
