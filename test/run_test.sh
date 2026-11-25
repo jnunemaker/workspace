@@ -435,7 +435,7 @@ app_dir=${paths%%|*}
 root_dir=${paths#*|}
 log="$TEST_TMP/failing-environment-hook-run.log"
 output="$TEST_TMP/failing-environment-hook-run.out"
-printf '(exit 23)\n' > "$app_dir/bin/workspace-environment-hook"
+printf '[ "$#" -eq 0 ] || return 99\n(exit 23)\n' > "$app_dir/bin/workspace-environment-hook"
 cd "$app_dir"
 : > "$WORKSPACE_TEST_LSOF_LOG"
 assert_false "run fails when the environment hook fails" env PATH="$archive_bin:$PATH" CONDUCTOR_WORKSPACE_NAME=failing-environment-hook-run \
