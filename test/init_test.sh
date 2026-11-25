@@ -573,10 +573,11 @@ assert_true "init without ruby still creates the shim" [ -x bin/workspace ]
 
 # Without a working Ruby, init cannot tell whether an existing Codex
 # environment already has cleanup, so it leaves cleanup alone instead of adding
-# a second table. A version-manager shim can be on PATH and still fail.
+# a second table. A version-manager shim can be on PATH and still fail, with
+# any exit status, so this one exits with an unusual one.
 broken_ruby_bin="$TEST_TMP/broken-ruby-bin"
 mkdir -p "$broken_ruby_bin"
-printf '#!/bin/sh\necho "ruby: version not installed" >&2\nexit 1\n' > "$broken_ruby_bin/ruby"
+printf '#!/bin/sh\necho "ruby: version not installed" >&2\nexit 10\n' > "$broken_ruby_bin/ruby"
 chmod +x "$broken_ruby_bin/ruby"
 for ruby_case in missing broken; do
   case "$ruby_case" in
