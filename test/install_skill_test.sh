@@ -40,17 +40,35 @@ run_concurrent_installers() {
   local first_pid second_pid
 
   mkdir -p "$fake_bin" "$barrier"
+  # Ensure the old mkdir-based lock fails the regression even on systems
+  # where mkdir itself does not return success to overlapping callers.
+  cat > "$fake_bin/mkdir" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "$WORKSPACE_INSTALL_LOCK" ]; then
+  exec /bin/mkdir -p "$1"
+fi
+exec /bin/mkdir "$@"
+SH
   cat > "$fake_bin/ln" <<'SH'
 #!/bin/sh
 : > "$WORKSPACE_LN_BARRIER/$$"
-if [ ! -d "$WORKSPACE_INSTALL_LOCK" ]; then
+if [ ! -f "$WORKSPACE_INSTALL_LOCK" ]; then
+  tries=0
   while [ "$(find "$WORKSPACE_LN_BARRIER" -type f | wc -l | tr -d ' ')" -lt 2 ]; do
+    [ "$tries" -lt 100 ] || exit 1
+    tries=$((tries + 1))
     sleep 0.01
   done
 fi
 exec /bin/ln "$@"
 SH
-  chmod +x "$fake_bin/ln"
+  # The installer that loses the lock retries after "sleep 1"; keep it short.
+  cat > "$fake_bin/sleep" <<'SH'
+#!/bin/sh
+[ "$1" = 1 ] && exec /bin/sleep 0.05
+exec /bin/sleep "$@"
+SH
+  chmod +x "$fake_bin/ln" "$fake_bin/mkdir" "$fake_bin/sleep"
 
   PATH="$fake_bin:$PATH" HOME="$home" WORKSPACE_HOME="$FAKE_WS" \
     WORKSPACE_LN_BARRIER="$barrier" \
@@ -157,11 +175,45 @@ run_concurrent_installers "$home"
 
 assert_equal "first concurrent installer succeeds" "0" "$first_status"
 assert_equal "second concurrent installer succeeds" "0" "$second_status"
+assert_equal "only one installer reaches symlink creation" "1" \
+  "$(find "$TEST_TMP/concurrent-ln-barrier" -type f | wc -l | tr -d ' ')"
 assert_equal "concurrent install leaves the intended symlink" \
   "$FAKE_WS/skills/workspace" \
   "$(readlink "$home/.claude/skills/workspace")"
 assert_false "concurrent install does not create a nested workspace symlink" \
   [ -L "$FAKE_WS/skills/workspace/workspace" ]
+
+# ── an existing lock is respected, whichever installer took it ──
+
+# Lock retries sleep 1s each; skip the wait so the timeout path is quick.
+no_sleep_bin="$TEST_TMP/no-sleep-bin"
+mkdir -p "$no_sleep_bin"
+printf '#!/bin/sh\nexit 0\n' > "$no_sleep_bin/sleep"
+chmod +x "$no_sleep_bin/sleep"
+
+# $1 names the lock: "directory" (an older mkdir-based installer) or "file".
+assert_held_lock_respected() {
+  local home lock marker status=0
+  home=$(fresh_home "$1-lock" with_claude)
+  lock="$home/.claude/skills/.workspace-install.lock"
+  marker="$lock"
+  mkdir -p "$home/.claude/skills"
+  if [ "$1" = directory ]; then
+    mkdir "$lock"
+    marker="$lock/owner"
+  fi
+  printf 'held\n' > "$marker"
+
+  PATH="$no_sleep_bin:$PATH" run_installer "$home" || status=$?
+  assert_equal "installer times out on a held $1 lock" "1" "$status"
+  assert_equal "installer leaves the held $1 lock in place" "held" \
+    "$(cat "$marker" 2>/dev/null)"
+  assert_false "installer does not link while a $1 lock is held" \
+    [ -L "$home/.claude/skills/workspace" ]
+}
+
+assert_held_lock_respected directory
+assert_held_lock_respected file
 
 # ── conflict: existing real directory at target ─────────────────
 

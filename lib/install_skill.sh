@@ -31,7 +31,10 @@ install_workspace_skill() {
   fi
 
   _skill_lock_attempts=0
-  while ! mkdir "$_skill_lock" 2>/dev/null; do
+  # Some mkdir implementations can report success to both simultaneous
+  # callers. Noclobber creates one regular file or loses to an existing
+  # lock, including a directory held by an older Workspace install.
+  while ! (set -C; : > "$_skill_lock") 2>/dev/null; do
     if [ -L "$_skill_link" ] || [ -e "$_skill_link" ]; then
       if [ "$(readlink "$_skill_link" 2>/dev/null)" = "$SKILL_SRC" ]; then
         return 0
@@ -48,8 +51,8 @@ install_workspace_skill() {
     sleep 1
   done
 
-  trap 'rmdir "$_skill_lock" 2>/dev/null' EXIT
-  trap 'rmdir "$_skill_lock" 2>/dev/null; exit 1' HUP INT TERM
+  trap 'rm -f "$_skill_lock" 2>/dev/null' EXIT
+  trap 'rm -f "$_skill_lock" 2>/dev/null; exit 1' HUP INT TERM
   _skill_result=0
 
   # Recheck while holding the lock: another installer may have completed while
@@ -70,7 +73,7 @@ install_workspace_skill() {
     _skill_result=1
   fi
 
-  rmdir "$_skill_lock" 2>/dev/null || _skill_result=1
+  rm "$_skill_lock" 2>/dev/null || _skill_result=1
   trap - EXIT HUP INT TERM
   return "$_skill_result"
 }
