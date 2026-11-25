@@ -34,6 +34,16 @@ case "$_prune_mode" in
   *) refuse_arguments prune "$@" ;;
 esac
 
+# WORKSPACE_SKIP_PRUNE=1 turns off the automatic cleanups: bootstrap and run
+# (--quiet) and the SessionEnd hook (--deferred). A plain `workspace prune`
+# still runs.
+if [ "${WORKSPACE_SKIP_PRUNE:-}" = "1" ] && [ -n "$_prune_mode" ]; then
+  if [ "$_prune_mode" = "--quiet" ]; then
+    step "WORKSPACE_SKIP_PRUNE=1 — skipping removed-worktree cleanup"
+  fi
+  exit 0
+fi
+
 if [ "$_prune_mode" = "--after-delay" ]; then
   [ -n "${2:-}" ] || exit 0
   _prune_root="$2"

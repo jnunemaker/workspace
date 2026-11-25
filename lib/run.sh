@@ -40,6 +40,10 @@ resolve_workspace
 sanitize_workspace_name
 resolve_workspace_identity
 
+# WORKSPACE_SKIP_PRUNE comes from the caller's environment, never the project
+# .env, so run agrees with bootstrap and the SessionEnd hook.
+_workspace_skip_prune="${WORKSPACE_SKIP_PRUNE:-}"
+
 # Foreman's env-file values override its parent environment. Load the linked
 # dotenv here instead, restoring values already exported by the manager. This
 # also makes a dotenv WORKSPACE_PORT visible before Git port registration.
@@ -57,7 +61,7 @@ fi
 # interrupted, without adding work for existing providers or empty repos.
 if [ -n "${WORKSPACE_GIT_COMMON_DIR:-}" ] && \
   [ -d "$WORKSPACE_GIT_COMMON_DIR/workspace/registry" ]; then
-  sh "$WORKSPACE_LIB/prune.sh" --quiet
+  env WORKSPACE_SKIP_PRUNE="$_workspace_skip_prune" sh "$WORKSPACE_LIB/prune.sh" --quiet
 fi
 
 # A Codex run may be invoked before setup completes. Publish a collision-free
