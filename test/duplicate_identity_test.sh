@@ -58,8 +58,8 @@ shared_entry="$git_root/.git/workspace/registry/feature-implement-the-new-billin
 lifecycle "$first" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
 assert_equal "first long-named worktree bootstraps" "0" "$?"
 assert_equal "first long-named worktree owns the shared identity's record" "$first" "$(sed -n '3p' "$shared_entry")"
-assert_equal "the record names the owner's Git worktree directory" \
-  "$(cd "$first" && canonical_git_path "$(git rev-parse --git-dir)")" "$(sed -n '5p' "$shared_entry")"
+assert_equal "the record holds the owner's worktree token" \
+  "$(cat "$(git -C "$first" rev-parse --absolute-git-dir)/workspace-owner-token")" "$(sed -n '5p' "$shared_entry")"
 cp "$shared_entry" "$TEST_TMP/shared-record.expected"
 
 : > "$log"
@@ -152,9 +152,30 @@ assert_equal "an older record still refuses a collider while its path is live" "
 lifecycle "$collider" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
 assert_equal "the owner of an older record still runs" "0" "$?"
 assert_equal "the owner's run upgrades the record" \
-  "$(cd "$collider" && canonical_git_path "$(git rev-parse --git-dir)")" "$(sed -n '5p' "$shared_entry")"
-git -C "$git_root" worktree remove -f "$collider"
+  "$(cat "$(git -C "$collider" rev-parse --absolute-git-dir)/workspace-owner-token")" "$(sed -n '5p' "$shared_entry")"
+
+# An owner that later registers under another identity keeps the first one
+# until it archives it.
+printf 'collider-renamed\n' > "$collider/.workspace"
+lifecycle "$collider" sh "$WORKSPACE_HOME/lib/run.sh" >/dev/null 2>&1
+assert_equal "the owner runs under its new identity" "0" "$?"
+lifecycle "$latecomer" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "a renamed owner still holds its earlier identity" "1" "$?"
 git -C "$git_root" worktree remove -f "$latecomer"
+
+# A checkout of another repository at the owner's path is not the owner, even
+# while Git still has the owner's worktree directory.
+rm -rf "$collider"
+other_root="$TEST_TMP/other-root"
+mkdir -p "$other_root"
+printf 'other\n' > "$other_root/README.md"
+commit_git_repo "$other_root"
+git -C "$other_root" worktree add -q --detach "$collider"
+latecomer=$(add_worktree "feature-implement-the-new-billing-system-part-8")
+lifecycle "$latecomer" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "another repository's checkout at the owner's path does not block the name" "0" "$?"
+git -C "$other_root" worktree remove -f "$collider"
+git -C "$git_root" worktree prune
 
 # Characters sanitizing drops collapse names too: both of these become "wt".
 accented=$(add_worktree "$(printf '\303\274-wt-\303\251')")
@@ -169,6 +190,16 @@ resolve_workspace
 sanitize_workspace_name
 assert_false "a worktree whose name only drops non-ASCII characters is refused" register_workspace "51810" 2>/dev/null
 assert_equal "the refusal keeps the accented worktree's record" "$accented" "$(sed -n '3p' "$git_root/.git/workspace/registry/wt.record")"
+
+# The registry moves with the main checkout. Once Git repairs the worktree
+# links, the owner is still found.
+cd "$TEST_DIR"
+mv "$git_root" "$git_root-moved"
+git_root="$git_root-moved"
+git -C "$git_root" worktree repair >/dev/null 2>&1
+latest=$(add_worktree "feature-implement-the-new-billing-system-part-9")
+lifecycle "$latest" sh "$WORKSPACE_HOME/lib/bootstrap.sh" >/dev/null 2>&1
+assert_equal "the owner is still found after the main checkout moves" "1" "$?"
 
 cd "$TEST_DIR"
 report "duplicate workspace identity"
