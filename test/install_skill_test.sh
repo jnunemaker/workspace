@@ -62,7 +62,13 @@ if [ ! -f "$WORKSPACE_INSTALL_LOCK" ]; then
 fi
 exec /bin/ln "$@"
 SH
-  chmod +x "$fake_bin/ln" "$fake_bin/mkdir"
+  # The installer that loses the lock retries after "sleep 1"; keep it short.
+  cat > "$fake_bin/sleep" <<'SH'
+#!/bin/sh
+[ "$1" = 1 ] && exec /bin/sleep 0.05
+exec /bin/sleep "$@"
+SH
+  chmod +x "$fake_bin/ln" "$fake_bin/mkdir" "$fake_bin/sleep"
 
   PATH="$fake_bin:$PATH" HOME="$home" WORKSPACE_HOME="$FAKE_WS" \
     WORKSPACE_LN_BARRIER="$barrier" \
@@ -177,33 +183,37 @@ assert_equal "concurrent install leaves the intended symlink" \
 assert_false "concurrent install does not create a nested workspace symlink" \
   [ -L "$FAKE_WS/skills/workspace/workspace" ]
 
-# ── a lock held by an older installer is still respected ─────────
+# ── an existing lock is respected, whichever installer took it ──
 
-home=$(fresh_home legacy-lock with_claude)
-legacy_lock="$home/.claude/skills/.workspace-install.lock"
-legacy_bin="$TEST_TMP/legacy-bin"
-mkdir -p "$legacy_lock" "$legacy_bin"
-printf '#!/bin/sh\nexit 0\n' > "$legacy_bin/sleep"
-chmod +x "$legacy_bin/sleep"
+# Lock retries sleep 1s each; skip the wait so the timeout path is quick.
+no_sleep_bin="$TEST_TMP/no-sleep-bin"
+mkdir -p "$no_sleep_bin"
+printf '#!/bin/sh\nexit 0\n' > "$no_sleep_bin/sleep"
+chmod +x "$no_sleep_bin/sleep"
 
-legacy_status=0
-PATH="$legacy_bin:$PATH" run_installer "$home" || legacy_status=$?
-assert_equal "installer times out on an older directory lock" "1" "$legacy_status"
-assert_true "installer leaves the older lock untouched" [ -d "$legacy_lock" ]
-assert_false "installer does not link while an older installer holds the lock" \
-  [ -L "$home/.claude/skills/workspace" ]
+# $1 names the lock: "directory" (an older mkdir-based installer) or "file".
+assert_held_lock_respected() {
+  local home lock marker status=0
+  home=$(fresh_home "$1-lock" with_claude)
+  lock="$home/.claude/skills/.workspace-install.lock"
+  marker="$lock"
+  mkdir -p "$home/.claude/skills"
+  if [ "$1" = directory ]; then
+    mkdir "$lock"
+    marker="$lock/owner"
+  fi
+  printf 'held\n' > "$marker"
 
-home=$(fresh_home file-lock with_claude)
-file_lock="$home/.claude/skills/.workspace-install.lock"
-mkdir -p "$(dirname "$file_lock")"
-printf 'held\n' > "$file_lock"
+  PATH="$no_sleep_bin:$PATH" run_installer "$home" || status=$?
+  assert_equal "installer times out on a held $1 lock" "1" "$status"
+  assert_equal "installer leaves the held $1 lock in place" "held" \
+    "$(cat "$marker" 2>/dev/null)"
+  assert_false "installer does not link while a $1 lock is held" \
+    [ -L "$home/.claude/skills/workspace" ]
+}
 
-file_status=0
-PATH="$legacy_bin:$PATH" run_installer "$home" || file_status=$?
-assert_equal "installer times out on a regular file lock" "1" "$file_status"
-assert_equal "installer preserves the current lock" "held" "$(cat "$file_lock" 2>/dev/null)"
-assert_false "installer does not link while another installer holds the file lock" \
-  [ -L "$home/.claude/skills/workspace" ]
+assert_held_lock_respected directory
+assert_held_lock_respected file
 
 # ── conflict: existing real directory at target ─────────────────
 
