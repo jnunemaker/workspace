@@ -135,9 +135,16 @@ _codex_environment_is_workspace_managed() {
   grep -Eq "(script|command) = [\"'](bin/)?workspace (bootstrap|run|info|archive)[\"']" "$_managed_codex_environment"
 }
 
-_codex_cleanup_is_configured() {
+# Prints "configured" or "absent". Any other output means the check itself
+# failed, such as a missing or broken Ruby.
+_codex_cleanup_status() {
   _configured_codex_environment="$1"
   ruby -e '
+    configured = lambda do
+      puts "configured"
+      exit
+    end
+
     cleanup_key = lambda do |value|
       ["cleanup", %q{"cleanup"}, 39.chr + "cleanup" + 39.chr].any? do |key|
         next false unless value.start_with?(key)
@@ -153,17 +160,17 @@ _codex_cleanup_is_configured() {
       if value.start_with?("[") && value.end_with?("]")
         unless value.start_with?("[[") || value[-2, 2] == "]]"
           table_name = value[1...-1].strip
-          exit 0 if cleanup_key.call(table_name)
+          configured.call if cleanup_key.call(table_name)
         end
         inside_table = true
         next
       end
 
       root_key = value.split("=", 2).first.to_s.strip
-      exit 0 if !inside_table && cleanup_key.call(root_key)
+      configured.call if !inside_table && cleanup_key.call(root_key)
     end
-    exit 1
-  ' "$_configured_codex_environment"
+    puts "absent"
+  ' "$_configured_codex_environment" 2>/dev/null
 }
 
 _upgrade_codex_cleanup_table() {
@@ -215,11 +222,21 @@ _ensure_codex_cleanup() {
 
   # Any explicit cleanup is a public project contract. Only replace the exact
   # historical Workspace archive default; inline/platform/custom values stay
-  # byte-for-byte unchanged.
-  if _codex_cleanup_is_configured "$_cleanup_codex_environment"; then
-    _upgrade_codex_cleanup_table "$_cleanup_codex_environment"
-    return
-  fi
+  # byte-for-byte unchanged. Add cleanup only when the check confirms there is
+  # none: a failed check could hide an existing table, and a second [cleanup]
+  # table makes the file invalid TOML.
+  _cleanup_status=$(_codex_cleanup_status "$_cleanup_codex_environment") || _cleanup_status=""
+  case "$_cleanup_status" in
+    configured)
+      _upgrade_codex_cleanup_table "$_cleanup_codex_environment"
+      return
+      ;;
+    absent) ;;
+    *)
+      warn "Couldn't check Codex cleanup without a working Ruby — left it unchanged in $_cleanup_codex_environment"
+      return 0
+      ;;
+  esac
 
   _codex_environment_is_workspace_managed "$_cleanup_codex_environment" || return 0
 

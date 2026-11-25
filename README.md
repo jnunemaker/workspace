@@ -271,7 +271,9 @@ visible instead of being reported as successful cleanup. In existing Codex
 files, recognized Workspace commands are upgraded to use the shim, a missing
 native cleanup is added, and a missing **Workspace info** action is added.
 Exact older Workspace cleanup defaults are upgraded; custom cleanup commands
-and linked configuration files are left unchanged.
+and linked configuration files are left unchanged. Checking for existing
+native cleanup needs Ruby; without a working Ruby, `workspace init` neither
+adds nor upgrades native cleanup, and warns instead.
 
 `workspace init` also keeps a project-local `SessionEnd` hook in
 `.codex/hooks.json` as recovery for older Codex versions, interrupted cleanup,
